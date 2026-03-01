@@ -57,8 +57,19 @@ fn log(msg: &str) {
     }
 }
 
-fn update_live(text: &str) {
-    let _ = std::fs::write(LIVE_LOG, text);
+fn update_live(user: &str, assistant: &str) {
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let content = format!(
+        "## {} - You said:
+{}
+
+### Alan replied:
+{}
+---
+",
+        timestamp, user, assistant
+    );
+    let _ = std::fs::write(LIVE_LOG, content);
 }
 
 fn log_conversation(user: &str, assistant: &str) {
@@ -315,7 +326,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>) -> Result<(), Box<dyn 
         if !text.trim().is_empty() {
             let transcript = text.trim().to_string();
             log(&format!("📝 Transcript: {}", transcript));
-            update_live(&transcript);
+            update_live(&transcript, "...");
 
             // Check for voice toggle command
             let voice_was_enabled = {
@@ -374,7 +385,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>) -> Result<(), Box<dyn 
                     let short_reply = truncate_to_sentences(full_reply, 2);
                     
                     log(&format!("💬 Alan: {}", short_reply));
-                    update_live(&format!("You: {}\n\nAlan: {}", transcript, short_reply));
+                    update_live(&transcript, &short_reply);
                     log_conversation(&transcript, &short_reply);
                     
                     // Only speak if voice is enabled
