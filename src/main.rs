@@ -110,14 +110,28 @@ struct OpenClawMessage {
     content: String,
 }
 
+fn get_beep_path(name: &str) -> String {
+    // Try binary's directory first
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let path = dir.join(format!("{}.wav", name));
+            if path.exists() {
+                return path.to_string_lossy().to_string();
+            }
+        }
+    }
+    // Fallback to /tmp
+    format!("/tmp/{}.wav", name)
+}
+
 fn beep_down() {
-    Command::new("paplay").arg("/tmp/beep-down.wav").spawn().ok();
+    Command::new("paplay").arg(get_beep_path("beep-down")).spawn().ok();
 }
 
 fn beep_up() {
-    Command::new("paplay").arg("/tmp/beep-up.wav").spawn().ok();
+    Command::new("paplay").arg(get_beep_path("beep-up")).spawn().ok();
     std::thread::sleep(std::time::Duration::from_millis(150));
-    Command::new("paplay").arg("/tmp/beep-up2.wav").spawn().ok();
+    Command::new("paplay").arg(get_beep_path("beep-up2")).spawn().ok();
 }
 
 fn speak(text: &str) {
