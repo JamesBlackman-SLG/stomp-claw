@@ -225,7 +225,9 @@ fn process(samples: Vec<f32>) -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = Vec::new();
     std::fs::File::open(tmp.path())?.read_to_end(&mut buf)?;
 
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
     let part = reqwest::multipart::Part::bytes(buf)
         .file_name("audio.wav")
         .mime_str("audio/wav")?;
