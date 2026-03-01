@@ -15,7 +15,7 @@ use tempfile::NamedTempFile;
 
 const LOG_FILE: &str = "/tmp/stomp-claw.log";
 const CONVERSATION_LOG: &str = "/tmp/stomp-claw-conversation.md";
-const LIVE_LOG: &str = "/tmp/stomp-claw-live.txt";
+const LIVE_LOG: &str = "/tmp/stomp-claw-live.md";
 const PEDAL_CC: u8 = 85;
 const NEMO_URL: &str = "http://localhost:5051";
 const TARGET_SAMPLE_RATE: u32 = 16000;
