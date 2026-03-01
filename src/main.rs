@@ -15,6 +15,7 @@ use tempfile::NamedTempFile;
 
 const LOG_FILE: &str = "/tmp/stomp-claw.log";
 const CONVERSATION_LOG: &str = "/tmp/stomp-claw-conversation.md";
+const LIVE_LOG: &str = "/tmp/stomp-claw-live.txt";
 const PEDAL_CC: u8 = 85;
 const NEMO_URL: &str = "http://localhost:5051";
 const TARGET_SAMPLE_RATE: u32 = 16000;
@@ -54,6 +55,10 @@ fn log(msg: &str) {
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(LOG_FILE) {
         let _ = writeln!(f, "[{}] {}", timestamp, msg);
     }
+}
+
+fn update_live(text: &str) {
+    let _ = std::fs::write(LIVE_LOG, text);
 }
 
 fn log_conversation(user: &str, assistant: &str) {
@@ -310,6 +315,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>) -> Result<(), Box<dyn 
         if !text.trim().is_empty() {
             let transcript = text.trim().to_string();
             log(&format!("📝 Transcript: {}", transcript));
+            update_live(&transcript);
 
             // Check for voice toggle command
             let voice_was_enabled = {
@@ -368,6 +374,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>) -> Result<(), Box<dyn 
                     let short_reply = truncate_to_sentences(full_reply, 2);
                     
                     log(&format!("💬 Alan: {}", short_reply));
+                    update_live(&format!("You: {}\n\nAlan: {}", transcript, short_reply));
                     log_conversation(&transcript, &short_reply);
                     
                     // Only speak if voice is enabled
