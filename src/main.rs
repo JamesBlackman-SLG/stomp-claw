@@ -489,7 +489,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
     std::fs::File::open(tmp.path())?.read_to_end(&mut buf)?;
 
     let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
+        .timeout(std::time::Duration::from_secs(600))
         .build()?;
 
     let part = reqwest::multipart::Part::bytes(buf)

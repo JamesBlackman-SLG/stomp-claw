@@ -18,24 +18,34 @@ const HTML: &str = r#"<!DOCTYPE html>
     <style>
         * { box-sizing: border-box; }
         body {
-            background: #000;
-            color: #fff;
+            background: #0d1117;
+            color: #c9d1d9;
             font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
             font-size: 16px;
-            line-height: 1.6;
+            line-height: 1.7;
             margin: 0;
-            padding: 20px;
+            padding: 32px 20px;
         }
         #content {
             max-width: 800px;
             margin: 0 auto;
         }
+        .heading { color: #58a6ff; font-weight: bold; }
+        .sub-heading { color: #d2a8ff; font-weight: bold; }
+        .you-said { color: #3fb950; font-weight: bold; }
+        .user-text { color: #7ee787; }
+        .alan-replied { color: #d2a8ff; font-weight: bold; }
+        .alan-text { color: #f0e6ff; }
+        .recording { color: #f0883e; font-weight: bold; }
+        .thinking { color: #d29922; font-weight: bold; }
+        .separator { color: #30363d; }
+        .timestamp { color: #6e7681; }
         #status {
             position: fixed;
             bottom: 10px;
             right: 10px;
             font-size: 12px;
-            color: #666;
+            color: #484f58;
         }
         .connected { color: #3fb950; }
         .disconnected { color: #f85149; }
@@ -50,7 +60,47 @@ const HTML: &str = r#"<!DOCTYPE html>
         const dot = document.querySelector('#status span');
 
         function render(text) {
-            contentEl.innerHTML = (text || 'Waiting for recording...').replace(/\\n/g, '<br>');
+            if (!text || text.trim() === '') {
+                text = 'Waiting for recording...';
+            }
+
+            // Split into lines and process each
+            const lines = text.split('\\n');
+            let html = '';
+            let section = 'none'; // tracks whether we're in user or alan text
+
+            for (let line of lines) {
+                // Escape HTML
+                line = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+                if (line.match(/^##\s+.*Recording/)) {
+                    html += '<span class="recording">' + line + '</span><br>';
+                    section = 'none';
+                } else if (line.match(/^##\s+.*You said/)) {
+                    html += '<span class="you-said">' + line + '</span><br>';
+                    section = 'user';
+                } else if (line.match(/^###?\s+.*thinking/i)) {
+                    html += '<span class="thinking">' + line + '</span><br>';
+                    section = 'none';
+                } else if (line.match(/^###?\s+.*Alan replied/)) {
+                    html += '<span class="alan-replied">' + line + '</span><br>';
+                    section = 'alan';
+                } else if (line.match(/^#{1,6}\s+/)) {
+                    html += '<span class="heading">' + line + '</span><br>';
+                    section = 'none';
+                } else if (line.match(/^---+$/)) {
+                    html += '<span class="separator">' + line + '</span><br>';
+                    section = 'none';
+                } else if (section === 'user') {
+                    html += '<span class="user-text">' + line + '</span><br>';
+                } else if (section === 'alan') {
+                    html += '<span class="alan-text">' + line + '</span><br>';
+                } else {
+                    html += line + '<br>';
+                }
+            }
+
+            contentEl.innerHTML = html;
         }
 
         function connect() {
