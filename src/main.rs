@@ -71,6 +71,19 @@ fn get_thinking_dots() -> &'static str {
     }
 }
 
+fn update_live_recording(seconds: f64) {
+    let dots = ".".repeat((seconds as usize / 2) % 4);
+    let content = format!(
+        "## 🎙️ Recording{} ({}s)
+
+Release pedal to transcribe...
+---
+",
+        dots, seconds
+    );
+    let _ = std::fs::write(LIVE_LOG, content);
+}
+
 fn update_live_thinking(user: &str) {
     let dots = get_thinking_dots();
     let content = format!(
@@ -210,6 +223,7 @@ fn main() {
 fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let recording = Arc::new(AtomicBool::new(false));
     let pedal_down = Arc::new(AtomicBool::new(false));
+    let recording_start = Arc::new(Mutex::new(Option::<std::time::Instant>::None));
     let audio_data: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
     
     // Config shared between threads
