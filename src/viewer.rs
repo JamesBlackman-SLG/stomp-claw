@@ -15,7 +15,6 @@ const HTML: &str = r#"<!DOCTYPE html>
 <head>
     <meta charset="utf-8">
     <title>Stomp Claw Live</title>
-    <script src="https://cdn.jsdelivr.net/npm/showdown@2.1.0/dist/showdown.min.js"></script>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -30,29 +29,6 @@ const HTML: &str = r#"<!DOCTYPE html>
         #content {
             max-width: 800px;
             margin: 0 auto;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-        #content h1, #content h2, #content h3 {
-            color: #58a6ff;
-            margin-top: 1.5em;
-        }
-        #content code {
-            background: #1a1a1a;
-            padding: 2px 6px;
-            border-radius: 3px;
-        }
-        #content pre {
-            background: #1a1a1a;
-            padding: 15px;
-            border-radius: 5px;
-            overflow-x: auto;
-        }
-        #content blockquote {
-            border-left: 3px solid #58a6ff;
-            margin-left: 0;
-            padding-left: 15px;
-            color: #8b949e;
         }
         #status {
             position: fixed;
@@ -69,13 +45,12 @@ const HTML: &str = r#"<!DOCTYPE html>
     <div id="content">Waiting for recording...</div>
     <div id="status"><span class="disconnected">●</span> <span id="status-text">Disconnected</span></div>
     <script>
-        const converter = new showdown.Converter();
         const contentEl = document.getElementById('content');
         const statusEl = document.getElementById('status-text');
         const dot = document.querySelector('#status span');
 
         function render(text) {
-            contentEl.innerHTML = converter.makeHtml(text || 'Waiting for recording...');
+            contentEl.innerHTML = (text || 'Waiting for recording...').replace(/\\n/g, '<br>');
         }
 
         function connect() {
@@ -203,7 +178,7 @@ fn main() {
 }
 
 fn escape_sse(s: &str) -> String {
+    // Escape for SSE: escape backslash first, then escape newlines as \n
     s.replace('\\', "\\\\")
         .replace('\n', "\\n")
-        .replace('\r', "\\r")
 }
