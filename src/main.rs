@@ -71,6 +71,56 @@ fn get_thinking_dots() -> &'static str {
     }
 }
 
+// Send current audio to nemo for partial transcription
+fn send_partial_transcription(samples: &[f32], client: &Client) -> Option<String> {
+    let temp_dir = std::env::temp_dir();
+    let wav_path = temp_dir.join("stomp_claw_partial.wav");
+    {
+        let spec = WavSpec { channels: 1, sample_rate: TARGET_SAMPLE_RATE, bits_per_sample: 16, sample_format: HoundFormat::Int };
+        let mut w = WavWriter::create(&wav_path, spec).ok()?;
+        for s in samples { w.write_sample((s.clamp(-1.0, 1.0) * 32767.0) as i16).ok()?; }
+        w.finalize().ok()?;
+    }
+    
+    let mut file = std::fs::File::open(&wav_path).ok()?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).ok()?;
+    drop(file);
+    let _ = std::fs::remove_file(&wav_path);
+    
+    let part = reqwest::multipart::Part::bytes(buf).file_name("audio.wav").mime_str("audio/wav").ok()?;
+    let form = reqwest::multipart::Form::new().part("file", part);
+    
+    let rt = tokio::runtime::Runtime::new();
+    if let Ok(rt) = rt {
+        return rt.block_on(async {
+            let resp = client.post(&format!("{}/transcribe/", NEMO_URL)).multipart(form).send().await.ok()?;
+            if resp.status().is_success() {
+                let text = resp.text().await.ok()?;
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+            None
+        });
+    }
+    None
+}
+
+fn update_live_with_partial(text: &str) {
+    let content = format!(
+        "## 🎙️ Recording... (transcribing)
+
+{}
+
+---
+",
+        text
+    );
+    let _ = std::fs::write(LIVE_LOG, content);
+}
+
 fn update_live_recording(seconds: f64) {
     let dots = ".".repeat((seconds as usize / 2) % 4);
     let content = format!(
