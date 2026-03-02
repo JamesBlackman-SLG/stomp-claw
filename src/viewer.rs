@@ -156,7 +156,7 @@ impl Read for SseReader {
 fn main() {
     println!("Starting Stomp Claw Viewer on http://localhost:8765");
 
-    let (tx, rx) = channel::<PathBuf>();
+    let tx = channel::<PathBuf>().0;
 
     // Spawn file watcher thread
     thread::spawn(move || {
@@ -181,9 +181,6 @@ fn main() {
         }
     });
 
-    // Track current content to detect changes
-    let current_content: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
-
     // Create a channel for SSE messages that's separate from the file watcher
     let (sse_tx, sse_rx) = std::sync::mpsc::channel::<String>();
     let sse_receiver = Arc::new(Mutex::new(sse_rx));
@@ -196,9 +193,6 @@ fn main() {
         let initial = fs::read_to_string(LIVE_FILE).unwrap_or_else(|_| "Waiting for recording...".to_string());
         let _ = tx_clone.send(format!("data: {}\n\n", escape_sse(&initial)));
 
-        // Watch for changes - use a new receiver
-        let (file_tx, file_rx) = channel::<PathBuf>();
-
         // We can't easily share the file watcher, so let's just poll the file directly
         loop {
             thread::sleep(Duration::from_millis(500));
@@ -209,7 +203,6 @@ fn main() {
     });
 
     let server = Server::new(PORT, move |request| {
-        let current_content = current_content.clone();
         let sse_receiver = sse_receiver.clone();
 
         rouille::router!(request,
