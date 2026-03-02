@@ -57,6 +57,38 @@ fn log(msg: &str) {
     }
 }
 
+// Night Rider style thinking animation
+fn get_thinking_animation() -> &'static str {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let i = COUNTER.fetch_add(1, Ordering::Relaxed) % 8;
+    match i {
+        0 => "▌▌▌▌▌ ░░░░░░░",
+        1 => "▌▌▌▌▌▌ ░░░░░",
+        2 => " ▌▌▌▌▌▌▌ ░░░",
+        3 => "  ▌▌▌▌▌▌▌▌ ░",
+        4 => "░ ▌▌▌▌▌▌▌▌▌ ",
+        5 => "░░ ▌▌▌▌▌▌▌▌ ",
+        6 => "░░░ ▌▌▌▌▌▌▌ ",
+        7 => "░░░░ ▌▌▌▌▌▌ ",
+        _ => "▌▌▌▌▌ ░░░░░░░",
+    }
+}
+
+fn update_live_thinking(user: &str) {
+    let thinking = get_thinking_animation();
+    let content = format!(
+        "## You said:
+{}
+
+### Alan is{}...
+---
+",
+        user, thinking
+    );
+    let _ = std::fs::write(LIVE_LOG, content);
+}
+
 fn update_live(user: &str, assistant: &str) {
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     let content = format!(
@@ -326,7 +358,14 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>) -> Result<(), Box<dyn 
         if !text.trim().is_empty() {
             let transcript = text.trim().to_string();
             log(&format!("📝 Transcript: {}", transcript));
-            update_live(&transcript, "...");
+            // Spawn thread to animate thinking
+            let user_for_thread = transcript.clone();
+            std::thread::spawn(move || {
+                for _ in 0..50 { // 50 * 100ms = 5 seconds max
+                    update_live_thinking(&user_for_thread);
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            });
 
             // Check for voice toggle command
             let voice_was_enabled = {
