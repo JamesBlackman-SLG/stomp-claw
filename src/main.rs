@@ -73,6 +73,7 @@ fn get_thinking_dots() -> &'static str {
 
 // Send current audio to nemo for partial transcription
 fn send_partial_transcription(samples: &[f32], client: &Client) -> Option<String> {
+    log("🔄 Attempting partial transcription...");
     let temp_dir = std::env::temp_dir();
     let wav_path = temp_dir.join("stomp_claw_partial.wav");
     {
@@ -354,6 +355,31 @@ fn midi_listener(
                     pedal_down.store(true, Ordering::Relaxed);
                     recording.store(true, Ordering::Relaxed);
                     audio_data.lock().unwrap().clear();
+                    // Start recording with partial transcription
+                    log("🎙️ Starting recording thread");
+                    let pd = pedal_down.clone();
+                    let rs = recording_start.clone();
+                    let audio = audio_data.clone();
+                    *rs.lock().unwrap() = Some(std::time::Instant::now());
+                    std::thread::spawn(move || {
+                        let client = Client::builder().timeout(std::time::Duration::from_secs(10)).build().unwrap();
+                        while pd.load(Ordering::Relaxed) {
+                            if let Some(start) = *rs.lock().unwrap() {
+                                let elapsed = start.elapsed().as_secs_f64();
+                                log(&format!("⏱️ Recording: {}s", elapsed));
+                                if elapsed > 0.5 {
+                                    let samples = audio.lock().unwrap();
+                                    if let Some(text) = send_partial_transcription(&samples, &client) {
+                                        log(&format!("📝 Partial: {}", text));
+                                        update_live_with_partial(&text);
+                                    }
+                                } else {
+                                    update_live_recording(elapsed);
+                                }
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(300));
+                        }
+                    });
                 } else if msg[2] == 0 && pedal_down.load(Ordering::Relaxed) {
                     log("👟 PEDAL UP");
                     beep_up();
