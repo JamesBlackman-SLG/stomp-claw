@@ -591,7 +591,6 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
             };
 
             let payload = serde_json::json!({
-                "model": "openclaw:claude-sonnet-4-6",  // Use Sonnet for better understanding
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": &transcript}
