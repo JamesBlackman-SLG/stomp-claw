@@ -391,7 +391,14 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>) -> Result<(), Box<dyn 
             let session = get_or_create_session();
             log(&format!("📤 Sending to OpenClaw (session: {})...", session));
 
-            let system_prompt = "You are talking to James via voice-only (foot pedal + TTS). Keep responses very short - 1-2 sentences max. Be direct and conversational. No long explanations.";
+            let (system_prompt, max_tokens) = { 
+                let cfg = config.lock().unwrap(); 
+                if cfg.voice_enabled { 
+                    ("You are talking to James via voice-only (foot pedal + TTS). Keep responses very short - 1-2 sentences max. Be direct and conversational. No long explanations.".to_string(), 150)
+                } else { 
+                    ("You are Alan, James's AI assistant.".to_string(), 2000) 
+                } 
+            };
 
             let payload = serde_json::json!({
                 "model": "openclaw:claude-sonnet-4-6",  // Use Sonnet for better understanding
@@ -400,7 +407,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>) -> Result<(), Box<dyn 
                     {"role": "user", "content": &transcript}
                 ],
                 "stream": false,
-                "max_tokens": 150,
+                "max_tokens": max_tokens,
                 "user": "stomp-claw"
             });
 
