@@ -57,34 +57,30 @@ fn log(msg: &str) {
     }
 }
 
-// Night Rider style thinking animation
-fn get_thinking_animation() -> &'static str {
+// Simple rotating dots
+fn get_thinking_dots() -> &'static str {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    let i = COUNTER.fetch_add(1, Ordering::Relaxed) % 8;
+    let i = COUNTER.fetch_add(1, Ordering::Relaxed) % 4;
     match i {
-        0 => "▌▌▌▌▌ ░░░░░░░",
-        1 => "▌▌▌▌▌▌ ░░░░░",
-        2 => " ▌▌▌▌▌▌▌ ░░░",
-        3 => "  ▌▌▌▌▌▌▌▌ ░",
-        4 => "░ ▌▌▌▌▌▌▌▌▌ ",
-        5 => "░░ ▌▌▌▌▌▌▌▌ ",
-        6 => "░░░ ▌▌▌▌▌▌▌ ",
-        7 => "░░░░ ▌▌▌▌▌▌ ",
-        _ => "▌▌▌▌▌ ░░░░░░░",
+        0 => ".",
+        1 => "..",
+        2 => "...",
+        3 => "....",
+        _ => "....",
     }
 }
 
 fn update_live_thinking(user: &str) {
-    let thinking = get_thinking_animation();
+    let dots = get_thinking_dots();
     let content = format!(
         "## You said:
 {}
 
-### Alan is{}...
+### Alan is thinking{}
 ---
 ",
-        user, thinking
+        user, dots
     );
     let _ = std::fs::write(LIVE_LOG, content);
 }
@@ -361,7 +357,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>) -> Result<(), Box<dyn 
             // Spawn thread to animate thinking
             let user_for_thread = transcript.clone();
             std::thread::spawn(move || {
-                for _ in 0..50 { // 50 * 100ms = 5 seconds max
+                for _ in 0..30 { // 30 * 100ms = 3 seconds max
                     update_live_thinking(&user_for_thread);
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
