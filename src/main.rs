@@ -266,9 +266,10 @@ fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let pedal_down2 = pedal_down.clone();
     let audio2 = audio_data.clone();
     let config2 = config.clone();
+    let recording_start2 = recording_start.clone();
 
     std::thread::spawn(move || {
-        if let Err(e) = midi_listener(recording2, pedal_down2, audio2, config2) {
+        if let Err(e) = midi_listener(recording2, pedal_down2, audio2, config2, recording_start2) {
             log(&format!("MIDI error: {}", e));
         }
     });
@@ -281,6 +282,7 @@ fn midi_listener(
     pedal_down: Arc<AtomicBool>,
     audio_data: Arc<Mutex<Vec<f32>>>,
     config: Arc<Mutex<Config>>,
+    recording_start: Arc<Mutex<Option<std::time::Instant>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut midi_in = MidiInput::new("stomp_claw")?;
     midi_in.ignore(Ignore::None);
