@@ -511,6 +511,11 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>) -> Result<(), Box<dyn 
                 .send().await?;
 
             let reply_text = resp2.text().await?;
+            if reply_text.contains("error") || reply_text.len() < 20 {
+                log(&format!("❌ OpenClaw error: {}", reply_text));
+                update_live(&transcript, "❌ Error - no response received");
+                return Ok(());
+            }
             log(&format!("OpenClaw raw: {}", &reply_text[..reply_text.len().min(200)]));
 
             if let Ok(parsed) = serde_json::from_str::<OpenClawResponse>(&reply_text) {
