@@ -285,8 +285,6 @@ fn beep_down() {
 
 fn beep_up() {
     play_sound("beep-up");
-    std::thread::sleep(std::time::Duration::from_millis(150));
-    play_sound("beep-up2");
 }
 
 fn notify() {
