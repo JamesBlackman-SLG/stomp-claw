@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::io::Write;
-use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,6 +22,7 @@ const OPENCLAW_URL: &str = "http://127.0.0.1:18789/v1/chat/completions";
 const OPENCLAW_TOKEN: &str = "06b21a7fafad855670f81018f3a455edccaf5dedc470fa0b";
 const SESSION_FILE: &str = "/tmp/stomp-claw-session.txt";
 const CONFIG_FILE: &str = "/home/jb/.config/stomp-claw/config.toml";
+const AUDIO_SINK: &str = "alsa_output.pci-0000_0d_00.4.analog-stereo";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Config {
@@ -187,20 +187,55 @@ fn truncate_to_sentences(text: &str, max_sentences: usize) -> String {
     text.to_string()
 }
 
-/// Check if the transcript is a voice toggle command
-fn check_voice_command(transcript: &str) -> Option<bool> {
-    let t = transcript.to_lowercase();
-    let t = t.trim();
-    
-    if t.contains("voice") || t.contains("speech") || t.contains("talk") {
-        if t.contains("on") && !t.contains("off") {
-            return Some(true);
-        }
-        if t.contains("off") || t.contains("stop") || t.contains("disable") {
-            return Some(false);
-        }
+/// Strip punctuation and common filler words, return remaining words
+fn command_words(transcript: &str) -> Vec<String> {
+    let stripped: String = transcript.chars()
+        .map(|c| if c.is_alphanumeric() || c.is_whitespace() { c } else { ' ' })
+        .collect();
+    stripped.to_lowercase()
+        .split_whitespace()
+        .filter(|w| !matches!(*w, "uh" | "um" | "please" | "the" | "a" | "my"))
+        .map(|w| w.to_string())
+        .collect()
+}
+
+/// Check if the transcript is a session reset command (must be the entire utterance)
+fn is_session_reset_command(transcript: &str) -> bool {
+    let words = command_words(transcript);
+    matches!(words.iter().map(|w| w.as_str()).collect::<Vec<_>>().as_slice(),
+        ["new", "session"]
+        | ["reset", "session"] | ["reset", "context"]
+        | ["clear", "session"] | ["clear", "context"]
+        | ["start", "over"]
+        | ["fresh", "start"]
+    )
+}
+
+/// Check if the transcript is a confirmation (must be the entire utterance)
+fn is_confirmation(transcript: &str) -> Option<bool> {
+    let words = command_words(transcript);
+    match words.iter().map(|w| w.as_str()).collect::<Vec<_>>().as_slice() {
+        ["yes"] | ["yeah"] | ["yep"] | ["confirm"] | ["do", "it"] | ["yes", "sir"] => Some(true),
+        ["no"] | ["nope"] | ["cancel"] | ["never", "mind"] => Some(false),
+        _ => None,
     }
-    None
+}
+
+fn reset_session() -> String {
+    let session = format!("stomp-{}", uuid::Uuid::new_v4());
+    let _ = std::fs::write(SESSION_FILE, &session);
+    log(&format!("🔄 New session created: {}", session));
+    session
+}
+
+/// Check if the transcript is a voice toggle command (must be the entire utterance)
+fn check_voice_command(transcript: &str) -> Option<bool> {
+    let words = command_words(transcript);
+    match words.iter().map(|w| w.as_str()).collect::<Vec<_>>().as_slice() {
+        ["voice", "on"] | ["speech", "on"] => Some(true),
+        ["voice", "off"] | ["speech", "off"] => Some(false),
+        _ => None,
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -219,27 +254,43 @@ struct OpenClawMessage {
 }
 
 fn get_beep_path(name: &str) -> String {
-    // Try binary's directory first
+    let filename = format!("{}.wav", name);
+    // Try current working directory first (start.sh sets this)
+    if std::path::Path::new(&filename).exists() {
+        return filename;
+    }
+    // Try binary's directory
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let path = dir.join(format!("{}.wav", name));
+            let path = dir.join(&filename);
             if path.exists() {
                 return path.to_string_lossy().to_string();
             }
         }
     }
     // Fallback to /tmp
-    format!("/tmp/{}.wav", name)
+    format!("/tmp/{}", filename)
+}
+
+fn play_sound(name: &str) {
+    Command::new("paplay")
+        .arg("--device").arg(AUDIO_SINK)
+        .arg(get_beep_path(name))
+        .spawn().ok();
 }
 
 fn beep_down() {
-    Command::new("paplay").arg(get_beep_path("beep-down")).spawn().ok();
+    play_sound("beep-down");
 }
 
 fn beep_up() {
-    Command::new("paplay").arg(get_beep_path("beep-up")).spawn().ok();
+    play_sound("beep-up");
     std::thread::sleep(std::time::Duration::from_millis(150));
-    Command::new("paplay").arg(get_beep_path("beep-up2")).spawn().ok();
+    play_sound("beep-up2");
+}
+
+fn notify() {
+    play_sound("notify");
 }
 
 fn speak(text: &str) {
@@ -258,6 +309,7 @@ fn get_or_create_session() -> String {
 
 fn main() {
     let _ = File::create(LOG_FILE);
+    let _ = std::fs::write(LIVE_LOG, "Hold the pedal and speak...\n");
     log("🎹 Stomp Claw starting...");
     
     let config = load_config();
@@ -279,6 +331,10 @@ fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     
     // Config shared between threads
     let config = Arc::new(Mutex::new(config));
+    // Flag to stop thinking animation thread when response arrives (or new recording starts)
+    let thinking = Arc::new(AtomicBool::new(false));
+    // Flag for session reset confirmation flow
+    let awaiting_session_reset = Arc::new(AtomicBool::new(false));
 
     let host = cpal::default_host();
     let device = host.default_input_device().ok_or("No input device")?;
@@ -318,9 +374,11 @@ fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let audio2 = audio_data.clone();
     let config2 = config.clone();
     let recording_start2 = recording_start.clone();
+    let thinking2 = thinking.clone();
+    let awaiting_session_reset2 = awaiting_session_reset.clone();
 
     std::thread::spawn(move || {
-        if let Err(e) = midi_listener(recording2, pedal_down2, audio2, config2, recording_start2) {
+        if let Err(e) = midi_listener(recording2, pedal_down2, audio2, config2, recording_start2, thinking2, awaiting_session_reset2) {
             log(&format!("MIDI error: {}", e));
         }
     });
@@ -334,6 +392,8 @@ fn midi_listener(
     audio_data: Arc<Mutex<Vec<f32>>>,
     config: Arc<Mutex<Config>>,
     recording_start: Arc<Mutex<Option<std::time::Instant>>>,
+    thinking: Arc<AtomicBool>,
+    awaiting_session_reset: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut midi_in = MidiInput::new("stomp_claw")?;
     midi_in.ignore(Ignore::None);
@@ -352,6 +412,8 @@ fn midi_listener(
                 if msg[2] == 127 && !pedal_down.load(Ordering::Relaxed) {
                     beep_down();
                     log("👟 PEDAL DOWN");
+                    // Kill any existing thinking animation thread
+                    thinking.store(false, Ordering::Relaxed);
                     pedal_down.store(true, Ordering::Relaxed);
                     recording.store(true, Ordering::Relaxed);
                     audio_data.lock().unwrap().clear();
@@ -387,9 +449,13 @@ fn midi_listener(
                     pedal_down.store(false, Ordering::Relaxed);
                     let samples = audio_data.lock().unwrap().clone();
                     let config = config.clone();
+                    let thinking = thinking.clone();
+                    let awaiting_session_reset = awaiting_session_reset.clone();
                     std::thread::spawn(move || {
-                        if let Err(e) = process(samples, config) {
+                        if let Err(e) = process(samples, config, thinking.clone(), awaiting_session_reset) {
+                            thinking.store(false, Ordering::Relaxed);
                             log(&format!("Processing error: {}", e));
+                            update_live("Error", &format!("Something went wrong: {}", e));
                         }
                     });
                 }
@@ -402,7 +468,7 @@ fn midi_listener(
     loop { std::thread::sleep(std::time::Duration::from_secs(1)); }
 }
 
-fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>) -> Result<(), Box<dyn std::error::Error>> {
+fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBool>, awaiting_session_reset: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
     if samples.is_empty() { log("Empty recording"); return Ok(()); }
     log(&format!("Processing {} samples @ {}Hz", samples.len(), TARGET_SAMPLE_RATE));
 
@@ -425,7 +491,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>) -> Result<(), Box<dyn 
     std::fs::File::open(tmp.path())?.read_to_end(&mut buf)?;
 
     let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(120))
         .build()?;
 
     let part = reqwest::multipart::Part::bytes(buf)
@@ -446,10 +512,43 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>) -> Result<(), Box<dyn 
         if !text.trim().is_empty() {
             let transcript = text.trim().to_string();
             log(&format!("📝 Transcript: {}", transcript));
-            // Spawn thread to animate thinking
+
+            // Handle session reset confirmation if awaiting
+            if awaiting_session_reset.load(Ordering::Relaxed) {
+                awaiting_session_reset.store(false, Ordering::Relaxed);
+                match is_confirmation(&transcript) {
+                    Some(true) => {
+                        let session = reset_session();
+                        let msg = format!("New session started: {}", &session[..session.len().min(20)]);
+                        log(&format!("✅ {}", msg));
+                        update_live("New session", &msg);
+                        speak("New session started.");
+                        return Ok(());
+                    }
+                    _ => {
+                        log("❌ Session reset cancelled");
+                        update_live("Session reset", "Cancelled.");
+                        speak("Cancelled.");
+                        return Ok(());
+                    }
+                }
+            }
+
+            // Check for session reset command
+            if is_session_reset_command(&transcript) {
+                log("🔄 Session reset requested, awaiting confirmation");
+                awaiting_session_reset.store(true, Ordering::Relaxed);
+                update_live(&transcript, "Start a new session? Press pedal and say **yes** or **no**.");
+                speak("Start a new session? Say yes or no.");
+                return Ok(());
+            }
+
+            // Spawn thread to animate thinking (stops when thinking flag is cleared)
+            thinking.store(true, Ordering::Relaxed);
             let user_for_thread = transcript.clone();
+            let thinking_flag = thinking.clone();
             std::thread::spawn(move || {
-                for _ in 0..30 { // 30 * 100ms = 3 seconds max
+                while thinking_flag.load(Ordering::Relaxed) {
                     update_live_thinking(&user_for_thread);
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
@@ -463,7 +562,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>) -> Result<(), Box<dyn 
             
             if let Some(new_voice_state) = check_voice_command(&transcript) {
                 let mut cfg = config.lock().unwrap();
-                let changed = cfg.voice_enabled != new_voice_state;
+                let _changed = cfg.voice_enabled != new_voice_state;
                 cfg.voice_enabled = new_voice_state;
                 save_config(&cfg);
                 
@@ -473,6 +572,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>) -> Result<(), Box<dyn 
                     "Voice disabled"
                 };
                 log(&format!("🔊 {}", msg));
+                thinking.store(false, Ordering::Relaxed);
                 if voice_was_enabled != new_voice_state {
                     speak(msg);
                 }
@@ -511,30 +611,43 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>) -> Result<(), Box<dyn 
                 .send().await?;
 
             let reply_text = resp2.text().await?;
-            if reply_text.contains("error") || reply_text.len() < 20 {
-                log(&format!("❌ OpenClaw error: {}", reply_text));
-                update_live(&transcript, "❌ Error - no response received");
-                return Ok(());
-            }
             log(&format!("OpenClaw raw: {}", &reply_text[..reply_text.len().min(200)]));
 
-            if let Ok(parsed) = serde_json::from_str::<OpenClawResponse>(&reply_text) {
-                if let Some(choice) = parsed.choices.first() {
-                    let full_reply = &choice.message.content;
-                    let short_reply = truncate_to_sentences(full_reply, 2);
-                    
-                    log(&format!("💬 Alan: {}", short_reply));
-                    update_live(&transcript, &short_reply);
-                    log_conversation(&transcript, &short_reply);
-                    
-                    // Only speak if voice is enabled
+            match serde_json::from_str::<OpenClawResponse>(&reply_text) {
+                Ok(parsed) if !parsed.choices.is_empty() => {
+                    let full_reply = &parsed.choices[0].message.content;
+
+                    // Only truncate if voice is enabled
+                    let final_reply = {
+                        let cfg = config.lock().unwrap();
+                        if cfg.voice_enabled {
+                            truncate_to_sentences(full_reply, 2)
+                        } else {
+                            full_reply.clone()
+                        }
+                    };
+
+                    thinking.store(false, Ordering::Relaxed);
+                    log(&format!("💬 Alan: {}", final_reply));
+                    update_live(&transcript, &final_reply);
+                    log_conversation(&transcript, &final_reply);
+
+                    // Speak if voice enabled, otherwise play notification chime
                     let cfg = config.lock().unwrap();
                     if cfg.voice_enabled {
-                        speak(&short_reply);
+                        speak(&final_reply);
+                    } else {
+                        notify();
                     }
+                }
+                _ => {
+                    thinking.store(false, Ordering::Relaxed);
+                    log(&format!("❌ OpenClaw error: {}", reply_text));
+                    update_live(&transcript, &format!("❌ Error: {}", &reply_text[..reply_text.len().min(100)]));
                 }
             }
         } else {
+            thinking.store(false, Ordering::Relaxed);
             log("Empty transcript");
         }
         Ok::<_, Box<dyn std::error::Error>>(())
