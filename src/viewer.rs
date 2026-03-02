@@ -3,8 +3,7 @@ use rouille::Server;
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::channel;
 use std::thread;
 use std::time::Duration;
 
@@ -104,52 +103,41 @@ const HTML: &str = r#"<!DOCTYPE html>
 </body>
 </html>"#;
 
-// Custom reader that streams SSE messages from a channel
-struct SseReader {
-    receiver: Arc<Mutex<Receiver<String>>>,
-    buffer: Vec<u8>,
+struct FileReader {
+    last_content: String,
+    first_read: bool,
 }
 
-impl SseReader {
-    fn new(receiver: Arc<Mutex<Receiver<String>>>) -> Self {
-        Self {
-            receiver,
-            buffer: Vec::new(),
-        }
+impl FileReader {
+    fn new() -> Self {
+        let initial = fs::read_to_string(LIVE_FILE).unwrap_or_else(|_| "Waiting for recording...".to_string());
+        Self { last_content: initial, first_read: true }
     }
 }
 
-impl Read for SseReader {
+impl Read for FileReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // If we have data in the buffer, return it
-        if !self.buffer.is_empty() {
-            let to_read = std::cmp::min(buf.len(), self.buffer.len());
-            buf[..to_read].copy_from_slice(&self.buffer[..to_read]);
-            self.buffer.drain(..to_read);
-            return Ok(to_read);
+        // Read current file content
+        let content = fs::read_to_string(LIVE_FILE)
+            .unwrap_or_else(|_| "Waiting for recording...".to_string());
+
+        // Always send content on first read, or if content changed
+        if self.first_read || content != self.last_content {
+            self.first_read = false;
+            self.last_content = content.clone();
+            let msg = format!("data: {}\n\n", escape_sse(&content));
+            let bytes = msg.as_bytes();
+            let to_copy = std::cmp::min(buf.len(), bytes.len());
+            buf[..to_copy].copy_from_slice(&bytes[..to_copy]);
+            return Ok(to_copy);
         }
 
-        // Try to receive a new message
-        let receiver = self.receiver.lock().unwrap();
-        match receiver.recv_timeout(Duration::from_secs(30)) {
-            Ok(msg) => {
-                self.buffer.extend_from_slice(msg.as_bytes());
-                let to_read = std::cmp::min(buf.len(), self.buffer.len());
-                buf[..to_read].copy_from_slice(&self.buffer[..to_read]);
-                self.buffer.drain(..to_read);
-                Ok(to_read)
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                // Send a comment line to keep connection alive
-                let heartbeat = b": heartbeat\n\n";
-                let to_read = std::cmp::min(buf.len(), heartbeat.len());
-                buf[..to_read].copy_from_slice(&heartbeat[..to_read]);
-                Ok(to_read)
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                Ok(0)
-            }
-        }
+        // No new data - return a heartbeat comment to keep connection alive
+        let heartbeat = ": heartbeat\n\n";
+        let bytes = heartbeat.as_bytes();
+        let to_copy = std::cmp::min(buf.len(), bytes.len());
+        buf[..to_copy].copy_from_slice(&bytes[..to_copy]);
+        Ok(to_copy)
     }
 }
 
@@ -158,7 +146,7 @@ fn main() {
 
     let tx = channel::<PathBuf>().0;
 
-    // Spawn file watcher thread
+    // Spawn file watcher thread (for future use if needed)
     thread::spawn(move || {
         let (watcher_tx, watcher_rx) = channel::<notify::Result<notify::Event>>();
 
@@ -181,38 +169,13 @@ fn main() {
         }
     });
 
-    // Create a channel for SSE messages that's separate from the file watcher
-    let (sse_tx, sse_rx) = std::sync::mpsc::channel::<String>();
-    let sse_receiver = Arc::new(Mutex::new(sse_rx));
-    let sse_sender = Arc::new(sse_tx);
-
-    // Spawn thread to watch for file changes and send SSE messages
-    let tx_clone = sse_sender.clone();
-    thread::spawn(move || {
-        // Send initial content
-        let initial = fs::read_to_string(LIVE_FILE).unwrap_or_else(|_| "Waiting for recording...".to_string());
-        let _ = tx_clone.send(format!("data: {}\n\n", escape_sse(&initial)));
-
-        // We can't easily share the file watcher, so let's just poll the file directly
-        loop {
-            thread::sleep(Duration::from_millis(500));
-            if let Ok(contents) = fs::read_to_string(LIVE_FILE) {
-                let _ = tx_clone.send(format!("data: {}\n\n", escape_sse(&contents)));
-            }
-        }
-    });
-
     let server = Server::new(PORT, move |request| {
-        let sse_receiver = sse_receiver.clone();
-
         rouille::router!(request,
             (GET) ["/"] => {
                 rouille::Response::html(HTML)
             },
             (GET) ["/events"] => {
-                // Clone the receiver for this request
-                let receiver = sse_receiver.clone();
-                let reader = SseReader::new(receiver);
+                let reader = FileReader::new();
 
                 rouille::Response {
                     status_code: 200,
