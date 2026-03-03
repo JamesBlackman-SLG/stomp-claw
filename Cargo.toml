@@ -22,7 +22,3 @@ chrono = "0.4"
 toml = "0.8"
 rouille = "3.6"
 notify = "6.1"
-
-[[bin]]
-name = "stomp-claw-viewer"
-path = "src/viewer.rs"
