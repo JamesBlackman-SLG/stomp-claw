@@ -37,6 +37,61 @@ const OPENCLAW_TOKEN: &str = "06b21a7fafad855670f81018f3a455edccaf5dedc470fa0b";
 const AUDIO_SINK: &str = "alsa_output.pci-0000_0d_00.4.analog-stereo";
 const VIEWER_PORT: &str = "localhost:8765";
 
+const HELP_HTML: &str = r##"<div class="help-page">
+<h2>Voice Commands</h2>
+
+<div class="help-group">
+<h3>Session Management</h3>
+<table>
+<tr><td class="cmd">new session</td><td>Start a fresh conversation session</td></tr>
+<tr><td class="cmd">list sessions</td><td>List all sessions by number</td></tr>
+<tr><td class="cmd">switch session <em>&lt;name or #&gt;</em></td><td>Switch to a session by name or number</td></tr>
+<tr><td class="cmd"><em>&lt;codename&gt;</em></td><td>Say a session codename directly to switch to it</td></tr>
+<tr><td class="cmd">rename session <em>&lt;name&gt;</em></td><td>Rename the current session</td></tr>
+<tr><td class="cmd">delete session</td><td>Delete the current session (asks for confirmation)</td></tr>
+</table>
+<p class="help-aliases">Aliases: <span>new conversation</span>, <span>reset session</span>, <span>clear context</span>, <span>start over</span>, <span>fresh start</span>, <span>show sessions</span>, <span>go to session &lt;name&gt;</span>, <span>name session &lt;name&gt;</span>, <span>remove session</span></p>
+</div>
+
+<div class="help-group">
+<h3>Voice Control</h3>
+<table>
+<tr><td class="cmd">voice on</td><td>Enable spoken responses (short, 1-2 sentences)</td></tr>
+<tr><td class="cmd">voice off</td><td>Disable spoken responses (full text replies)</td></tr>
+</table>
+<p class="help-aliases">Aliases: <span>speech on</span>, <span>speech off</span></p>
+</div>
+
+<div class="help-group">
+<h3>Navigation</h3>
+<table>
+<tr><td class="cmd">help</td><td>Show this help page</td></tr>
+<tr><td class="cmd">show live</td><td>Switch to the live view</td></tr>
+<tr><td class="cmd">show history</td><td>Switch to the history view</td></tr>
+</table>
+<p class="help-aliases">Aliases: <span>commands</span>, <span>live view</span>, <span>view live</span>, <span>live</span>, <span>history view</span>, <span>view history</span>, <span>history</span></p>
+</div>
+
+<div class="help-group">
+<h3>Recording</h3>
+<table>
+<tr><td class="cmd">Hold pedal</td><td>Start recording your voice</td></tr>
+<tr><td class="cmd">Release pedal</td><td>Stop recording and send to AI</td></tr>
+<tr><td class="cmd">ignore this</td><td>Cancel the current recording (say while holding pedal)</td></tr>
+</table>
+<p class="help-aliases">Cancel aliases: <span>never mind</span>, <span>forget it</span>, <span>scratch that</span></p>
+</div>
+
+<div class="help-group">
+<h3>Confirmation</h3>
+<table>
+<tr><td class="cmd">yes</td><td>Confirm a pending action (e.g. delete session)</td></tr>
+<tr><td class="cmd">no</td><td>Cancel a pending action</td></tr>
+</table>
+<p class="help-aliases">Aliases: <span>yeah</span>, <span>yep</span>, <span>confirm</span>, <span>do it</span>, <span>nope</span>, <span>cancel</span>, <span>never mind</span></p>
+</div>
+</div>"##;
+
 const VIEWER_HTML: &str = r#"<!DOCTYPE html>
 <html>
 <head>
@@ -150,6 +205,55 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         .session-btn.new-btn:hover {
             background: #1f6feb22;
         }
+        .help-page h2 {
+            color: #58a6ff;
+            font-size: 22px;
+            margin: 0 0 24px 0;
+        }
+        .help-group {
+            margin-bottom: 28px;
+        }
+        .help-group h3 {
+            color: #d2a8ff;
+            font-size: 15px;
+            margin: 0 0 10px 0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .help-group table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .help-group td {
+            padding: 6px 0;
+            vertical-align: top;
+            border-bottom: 1px solid #21262d;
+        }
+        .help-group td.cmd {
+            color: #7ee787;
+            white-space: nowrap;
+            padding-right: 24px;
+            width: 1%;
+        }
+        .help-group td.cmd em {
+            color: #8b949e;
+            font-style: italic;
+        }
+        .help-aliases {
+            color: #484f58;
+            font-size: 12px;
+            margin: 6px 0 0 0;
+        }
+        .help-aliases span {
+            color: #6e7681;
+        }
+        .help-aliases span::after {
+            content: " \00b7 ";
+            color: #484f58;
+        }
+        .help-aliases span:last-child::after {
+            content: "";
+        }
     </style>
 </head>
 <body>
@@ -161,6 +265,8 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             <div class="tab" data-view="history" onclick="switchTab('history')">
                 <span class="dot history"></span>History
             </div>
+            <div style="flex:1"></div>
+            <div class="tab" data-view="help" onclick="switchTab('help')">?</div>
         </div>
         <div id="session-bar"></div>
     </div>
@@ -174,6 +280,7 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         let currentView = 'live';
         let liveContent = 'Waiting for recording...';
         let historyContent = '';
+        let helpContent = '';
         let eventSource = null;
 
         function render(text) {
@@ -229,6 +336,8 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
 
             if (view === 'live') {
                 render(liveContent);
+            } else if (view === 'help') {
+                fetchHelp();
             } else {
                 fetchHistory();
             }
@@ -243,6 +352,21 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                     if (currentView === 'history') {
                         render(historyContent);
                         window.scrollTo(0, document.body.scrollHeight);
+                    }
+                });
+        }
+
+        function fetchHelp() {
+            if (helpContent) {
+                contentEl.innerHTML = helpContent;
+                return;
+            }
+            fetch('/help')
+                .then(r => r.text())
+                .then(html => {
+                    helpContent = html;
+                    if (currentView === 'help') {
+                        contentEl.innerHTML = helpContent;
                     }
                 });
         }
@@ -439,7 +563,7 @@ fn start_viewer() {
             },
             (GET) ["/view/set"] => {
                 if let Some(v) = request.get_param("v") {
-                    if v == "live" || v == "history" {
+                    if v == "live" || v == "history" || v == "help" {
                         let _ = fs::write(VIEW_FILE.as_str(), &v);
                     }
                 }
@@ -509,6 +633,9 @@ fn start_viewer() {
             (POST) ["/session/delete"] => {
                 let deleted = handle_delete_session_confirmed();
                 rouille::Response::json(&serde_json::json!({"ok": true, "deleted": deleted}))
+            },
+            (GET) ["/help"] => {
+                rouille::Response::html(HELP_HTML)
             },
             _ => {
                 rouille::Response {
@@ -1070,6 +1197,7 @@ fn check_view_command(transcript: &str) -> Option<&'static str> {
     match words.iter().map(|w| w.as_str()).collect::<Vec<_>>().as_slice() {
         ["live", "view"] | ["show", "live"] | ["view", "live"] | ["live"] => Some("live"),
         ["history", "view"] | ["show", "history"] | ["view", "history"] | ["history"] => Some("history"),
+        ["help"] | ["commands"] | ["show", "help"] | ["show", "commands"] => Some("help"),
         _ => None,
     }
 }
@@ -1532,11 +1660,15 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
             // Check for view switch command
             if let Some(view) = check_view_command(&transcript) {
                 switch_view(view);
-                let msg = format!("Switched to {} view.", view);
-                log(&format!("👁️ {}", msg));
                 thinking.store(false, Ordering::Relaxed);
-                update_live(&transcript, &msg);
-                speak(&msg);
+                if view == "help" {
+                    log("👁️ Showing help page");
+                } else {
+                    let msg = format!("Switched to {} view.", view);
+                    log(&format!("👁️ {}", msg));
+                    update_live(&transcript, &msg);
+                    speak(&msg);
+                }
                 return Ok::<_, Box<dyn std::error::Error>>(());
             }
 
