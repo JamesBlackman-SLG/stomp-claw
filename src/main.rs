@@ -296,7 +296,7 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                 btn.onclick = () => {
                     if (!s.active) {
                         fetch('/session/switch?id=' + encodeURIComponent(s.id), {method:'POST'})
-                            .then(() => fetchSessions());
+                            .then(() => { fetchSessions(); fetchHistory(); });
                     }
                 };
                 sessionBar.appendChild(btn);
@@ -306,7 +306,7 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             newBtn.textContent = '+ New';
             newBtn.onclick = () => {
                 fetch('/session/new', {method:'POST'})
-                    .then(() => fetchSessions());
+                    .then(() => { fetchSessions(); fetchHistory(); });
             };
             sessionBar.appendChild(newBtn);
         }
@@ -462,6 +462,9 @@ fn start_viewer() {
                         let sid = session.id.clone();
                         save_sessions(&sessions);
                         let _ = std::fs::write(SESSION_FILE.as_str(), &sid);
+                        // Update live.md to show the new session
+                        let live_content = format!("{}Switched to **{}**\n\n---\n", session_header(), name);
+                        let _ = std::fs::write(LIVE_LOG.as_str(), live_content);
                         rouille::Response::json(&serde_json::json!({"ok": true, "name": name}))
                     } else {
                         rouille::Response::json(&serde_json::json!({"ok": false, "error": "Session not found"}))
@@ -475,6 +478,8 @@ fn start_viewer() {
             (POST) ["/session/new"] => {
                 let name = handle_new_session();
                 let id = get_active_session_id();
+                let live_content = format!("{}New session: **{}**\n\n---\n", session_header(), name);
+                let _ = std::fs::write(LIVE_LOG.as_str(), live_content);
                 rouille::Response::json(&serde_json::json!({"ok": true, "name": name, "id": id}))
             },
             (POST) ["/session/rename"] => {
