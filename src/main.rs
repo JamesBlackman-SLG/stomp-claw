@@ -26,6 +26,7 @@ static LIVE_LOG: LazyLock<String> = LazyLock::new(|| base_dir().join("live.md").
 static SESSION_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("session.txt").to_string_lossy().to_string());
 static CONFIG_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("config.toml").to_string_lossy().to_string());
 static VIEW_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("view.txt").to_string_lossy().to_string());
+static SESSIONS_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("sessions.json").to_string_lossy().to_string());
 
 const PEDAL_CC: u8 = 85;
 const NEMO_URL: &str = "http://localhost:5051";
@@ -386,6 +387,226 @@ impl Default for Config {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Session {
+    id: String,
+    name: String,
+    created_at: String,
+    last_used: String,
+}
+
+enum SessionCommand {
+    NewSession,
+    SwitchSession(String),
+    ListSessions,
+    RenameSession(String),
+    DeleteSession,
+}
+
+fn load_sessions() -> Vec<Session> {
+    if let Ok(content) = std::fs::read_to_string(SESSIONS_FILE.as_str()) {
+        if let Ok(sessions) = serde_json::from_str(&content) {
+            return sessions;
+        }
+    }
+    Vec::new()
+}
+
+fn save_sessions(sessions: &[Session]) {
+    if let Ok(json) = serde_json::to_string_pretty(sessions) {
+        let _ = std::fs::write(SESSIONS_FILE.as_str(), json);
+    }
+}
+
+fn get_active_session_id() -> String {
+    std::fs::read_to_string(SESSION_FILE.as_str())
+        .unwrap_or_else(|_| "unknown".to_string())
+        .trim().to_string()
+}
+
+fn get_active_session_name() -> String {
+    let id = get_active_session_id();
+    let sessions = load_sessions();
+    sessions.iter()
+        .find(|s| s.id == id)
+        .map(|s| s.name.clone())
+        .unwrap_or_else(|| "Unknown".to_string())
+}
+
+fn session_header() -> String {
+    format!("**Session: {}**\n\n", get_active_session_name())
+}
+
+fn migrate_sessions() {
+    if std::path::Path::new(SESSIONS_FILE.as_str()).exists() {
+        return;
+    }
+
+    let now = chrono::Local::now().to_rfc3339();
+
+    if let Ok(id) = std::fs::read_to_string(SESSION_FILE.as_str()) {
+        let id = id.trim().to_string();
+        if !id.is_empty() {
+            let session = Session {
+                id,
+                name: "Session 1".to_string(),
+                created_at: now.clone(),
+                last_used: now,
+            };
+            save_sessions(&[session]);
+            log("📋 Migrated existing session to sessions.json");
+            return;
+        }
+    }
+
+    let session = Session {
+        id: format!("stomp-{}", uuid::Uuid::new_v4()),
+        name: "Session 1".to_string(),
+        created_at: now.clone(),
+        last_used: now,
+    };
+    let _ = std::fs::write(SESSION_FILE.as_str(), &session.id);
+    save_sessions(&[session]);
+    log("📋 Created initial session");
+}
+
+fn handle_new_session() -> String {
+    let now = chrono::Local::now().to_rfc3339();
+    let mut sessions = load_sessions();
+    let next_num = sessions.len() + 1;
+    let session = Session {
+        id: format!("stomp-{}", uuid::Uuid::new_v4()),
+        name: format!("Session {}", next_num),
+        created_at: now.clone(),
+        last_used: now,
+    };
+    let id = session.id.clone();
+    let name = session.name.clone();
+    sessions.push(session);
+    save_sessions(&sessions);
+    let _ = std::fs::write(SESSION_FILE.as_str(), &id);
+    log(&format!("🔄 New session created: {} ({})", name, id));
+    name
+}
+
+fn handle_switch_session(query: &str) -> Result<String, String> {
+    let mut sessions = load_sessions();
+    if sessions.is_empty() {
+        return Err("No sessions available.".to_string());
+    }
+
+    // Try as number first (1-based index)
+    if let Ok(num) = query.parse::<usize>() {
+        if num >= 1 && num <= sessions.len() {
+            sessions[num - 1].last_used = chrono::Local::now().to_rfc3339();
+            let id = sessions[num - 1].id.clone();
+            let name = sessions[num - 1].name.clone();
+            save_sessions(&sessions);
+            let _ = std::fs::write(SESSION_FILE.as_str(), &id);
+            return Ok(name);
+        } else {
+            return Err(format!("Session {} out of range. You have {} sessions.", num, sessions.len()));
+        }
+    }
+
+    // Substring match (case-insensitive)
+    let query_lower = query.to_lowercase();
+    let matched: Vec<usize> = sessions.iter().enumerate()
+        .filter(|(_, s)| s.name.to_lowercase().contains(&query_lower))
+        .map(|(i, _)| i)
+        .collect();
+
+    match matched.len() {
+        0 => Err(format!("No session found matching '{}'.", query)),
+        1 => {
+            let idx = matched[0];
+            sessions[idx].last_used = chrono::Local::now().to_rfc3339();
+            let id = sessions[idx].id.clone();
+            let name = sessions[idx].name.clone();
+            save_sessions(&sessions);
+            let _ = std::fs::write(SESSION_FILE.as_str(), &id);
+            Ok(name)
+        }
+        _ => {
+            let names: Vec<String> = matched.iter().map(|&i| sessions[i].name.clone()).collect();
+            Err(format!("Multiple sessions match: {}. Be more specific.", names.join(", ")))
+        }
+    }
+}
+
+fn handle_list_sessions() -> String {
+    let sessions = load_sessions();
+    let active_id = get_active_session_id();
+
+    if sessions.is_empty() {
+        return "No sessions.".to_string();
+    }
+
+    let mut parts = Vec::new();
+    for (i, s) in sessions.iter().enumerate() {
+        let marker = if s.id == active_id { " (active)" } else { "" };
+        parts.push(format!("{}. {}{}", i + 1, s.name, marker));
+    }
+
+    format!("You have {} sessions: {}", sessions.len(), parts.join(". "))
+}
+
+fn handle_rename_session(new_name: &str) -> Result<String, String> {
+    let active_id = get_active_session_id();
+    let mut sessions = load_sessions();
+
+    if let Some(session) = sessions.iter_mut().find(|s| s.id == active_id) {
+        let old_name = session.name.clone();
+        session.name = new_name.to_string();
+        save_sessions(&sessions);
+        Ok(format!("Renamed '{}' to '{}'", old_name, new_name))
+    } else {
+        Err("No active session found.".to_string())
+    }
+}
+
+fn handle_delete_session_confirmed() -> String {
+    let active_id = get_active_session_id();
+    let mut sessions = load_sessions();
+
+    let deleted_name = sessions.iter()
+        .find(|s| s.id == active_id)
+        .map(|s| s.name.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    sessions.retain(|s| s.id != active_id);
+
+    if sessions.is_empty() {
+        let now = chrono::Local::now().to_rfc3339();
+        let new_session = Session {
+            id: format!("stomp-{}", uuid::Uuid::new_v4()),
+            name: "Session 1".to_string(),
+            created_at: now.clone(),
+            last_used: now,
+        };
+        let _ = std::fs::write(SESSION_FILE.as_str(), &new_session.id);
+        sessions.push(new_session);
+    } else {
+        let most_recent = sessions.iter()
+            .max_by_key(|s| s.last_used.clone())
+            .unwrap();
+        let _ = std::fs::write(SESSION_FILE.as_str(), &most_recent.id);
+    }
+
+    save_sessions(&sessions);
+    log(&format!("🗑️ Deleted session: {}", deleted_name));
+    deleted_name
+}
+
+fn touch_active_session() {
+    let active_id = get_active_session_id();
+    let mut sessions = load_sessions();
+    if let Some(session) = sessions.iter_mut().find(|s| s.id == active_id) {
+        session.last_used = chrono::Local::now().to_rfc3339();
+        save_sessions(&sessions);
+    }
+}
+
 fn load_config() -> Config {
     if let Ok(content) = std::fs::read_to_string(CONFIG_FILE.as_str()) {
         if let Ok(c) = toml::from_str(&content) {
@@ -462,13 +683,13 @@ fn send_partial_transcription(samples: &[f32], client: &Client) -> Option<String
 
 fn update_live_with_partial(text: &str) {
     let content = format!(
-        "## 🎙️ Recording... (transcribing)
+        "{}## 🎙️ Recording... (transcribing)
 
 {}
 
 ---
 ",
-        text
+        session_header(), text
     );
     let _ = std::fs::write(LIVE_LOG.as_str(), content);
 }
@@ -476,34 +697,34 @@ fn update_live_with_partial(text: &str) {
 fn update_live_recording(seconds: f64) {
     let dots = ".".repeat((seconds as usize / 2) % 4);
     let content = format!(
-        "## 🎙️ Recording{} ({}s)
+        "{}## 🎙️ Recording{} ({}s)
 
 Release pedal to transcribe... (say \"ignore this\" to cancel)
 ---
 ",
-        dots, seconds
+        session_header(), dots, seconds
     );
     let _ = std::fs::write(LIVE_LOG.as_str(), content);
 }
 
 fn update_live_cancelled() {
-    let content = "## ❌ Transcription cancelled by user
+    let content = format!("{}## ❌ Transcription cancelled by user
 
 ---
-".to_string();
+", session_header());
     let _ = std::fs::write(LIVE_LOG.as_str(), content);
 }
 
 fn update_live_thinking(user: &str) {
     let dots = get_thinking_dots();
     let content = format!(
-        "## You said:
+        "{}## You said:
 {}
 
 ### Alan is thinking{}
 ---
 ",
-        user, dots
+        session_header(), user, dots
     );
     let _ = std::fs::write(LIVE_LOG.as_str(), content);
 }
@@ -565,16 +786,31 @@ fn command_words(transcript: &str) -> Vec<String> {
         .collect()
 }
 
-/// Check if the transcript is a session reset command (must be the entire utterance)
-fn is_session_reset_command(transcript: &str) -> bool {
+fn check_session_command(transcript: &str) -> Option<SessionCommand> {
     let words = command_words(transcript);
-    matches!(words.iter().map(|w| w.as_str()).collect::<Vec<_>>().as_slice(),
-        ["new", "session"]
+    let slice: Vec<&str> = words.iter().map(|w| w.as_str()).collect();
+
+    match slice.as_slice() {
+        ["new", "session"] | ["new", "conversation"]
         | ["reset", "session"] | ["reset", "context"]
         | ["clear", "session"] | ["clear", "context"]
-        | ["start", "over"]
-        | ["fresh", "start"]
-    )
+        | ["start", "over"] | ["fresh", "start"] => Some(SessionCommand::NewSession),
+        ["list", "sessions"] | ["show", "sessions"] => Some(SessionCommand::ListSessions),
+        ["delete", "session"] | ["remove", "session"] => Some(SessionCommand::DeleteSession),
+        ["switch", "session", rest @ ..] if !rest.is_empty() => {
+            Some(SessionCommand::SwitchSession(rest.join(" ")))
+        }
+        ["go", "to", "session", rest @ ..] if !rest.is_empty() => {
+            Some(SessionCommand::SwitchSession(rest.join(" ")))
+        }
+        ["rename", "session", rest @ ..] if !rest.is_empty() => {
+            Some(SessionCommand::RenameSession(rest.join(" ")))
+        }
+        ["name", "session", rest @ ..] if !rest.is_empty() => {
+            Some(SessionCommand::RenameSession(rest.join(" ")))
+        }
+        _ => None,
+    }
 }
 
 /// Check if the transcript is a confirmation (must be the entire utterance)
@@ -585,13 +821,6 @@ fn is_confirmation(transcript: &str) -> Option<bool> {
         ["no"] | ["nope"] | ["cancel"] | ["never", "mind"] => Some(false),
         _ => None,
     }
-}
-
-fn reset_session() -> String {
-    let session = format!("stomp-{}", uuid::Uuid::new_v4());
-    let _ = std::fs::write(SESSION_FILE.as_str(), &session);
-    log(&format!("🔄 New session created: {}", session));
-    session
 }
 
 /// Check if the transcript is a voice toggle command (must be the entire utterance)
@@ -718,6 +947,7 @@ fn main() {
     let config = load_config();
     log(&format!("Voice enabled: {}", config.voice_enabled));
     
+    migrate_sessions();
     let session = get_or_create_session();
     log(&format!("Using session: {}", session));
 
@@ -960,33 +1190,79 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
             let transcript = text.trim().to_string();
             log(&format!("📝 Transcript: {}", transcript));
 
-            // Handle session reset confirmation if awaiting
+            // Handle delete session confirmation if awaiting
             if awaiting_session_reset.load(Ordering::Relaxed) {
                 awaiting_session_reset.store(false, Ordering::Relaxed);
                 match is_confirmation(&transcript) {
                     Some(true) => {
-                        let session = reset_session();
-                        let msg = format!("New session started: {}", &session[..session.len().min(20)]);
+                        let deleted = handle_delete_session_confirmed();
+                        let msg = format!("Session '{}' deleted.", deleted);
                         log(&format!("✅ {}", msg));
-                        update_live("New session", &msg);
-                        speak("New session started.");
+                        update_live("Delete session", &msg);
+                        speak(&msg);
                         return Ok(());
                     }
                     _ => {
-                        log("❌ Session reset cancelled");
-                        update_live("Session reset", "Cancelled.");
+                        log("❌ Delete session cancelled");
+                        update_live("Delete session", "Cancelled.");
                         speak("Cancelled.");
                         return Ok(());
                     }
                 }
             }
 
-            // Check for session reset command
-            if is_session_reset_command(&transcript) {
-                log("🔄 Session reset requested, awaiting confirmation");
-                awaiting_session_reset.store(true, Ordering::Relaxed);
-                update_live(&transcript, "Start a new session? Press pedal and say **yes** or **no**.");
-                speak("Start a new session? Say yes or no.");
+            // Check for session picker commands
+            if let Some(cmd) = check_session_command(&transcript) {
+                match cmd {
+                    SessionCommand::NewSession => {
+                        let name = handle_new_session();
+                        let msg = format!("New session started: {}", name);
+                        log(&format!("✅ {}", msg));
+                        update_live("New session", &msg);
+                        speak(&msg);
+                    }
+                    SessionCommand::SwitchSession(query) => {
+                        match handle_switch_session(&query) {
+                            Ok(name) => {
+                                let msg = format!("Switched to {}", name);
+                                log(&format!("✅ {}", msg));
+                                update_live("Switch session", &msg);
+                                speak(&msg);
+                            }
+                            Err(e) => {
+                                log(&format!("❌ {}", e));
+                                update_live("Switch session", &e);
+                                speak(&e);
+                            }
+                        }
+                    }
+                    SessionCommand::ListSessions => {
+                        let msg = handle_list_sessions();
+                        log(&format!("📋 {}", msg));
+                        update_live("Sessions", &msg);
+                        speak(&msg);
+                    }
+                    SessionCommand::RenameSession(new_name) => {
+                        match handle_rename_session(&new_name) {
+                            Ok(msg) => {
+                                log(&format!("✅ {}", msg));
+                                update_live("Rename session", &msg);
+                                speak(&msg);
+                            }
+                            Err(e) => {
+                                log(&format!("❌ {}", e));
+                                update_live("Rename session", &e);
+                                speak(&e);
+                            }
+                        }
+                    }
+                    SessionCommand::DeleteSession => {
+                        log("🗑️ Delete session requested, awaiting confirmation");
+                        awaiting_session_reset.store(true, Ordering::Relaxed);
+                        update_live(&transcript, "Delete this session? Say **yes** or **no**.");
+                        speak("Delete this session? Say yes or no.");
+                    }
+                }
                 return Ok(());
             }
 
@@ -1039,6 +1315,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
 
             // Normal message - send to OpenClaw with Sonnet
             let session = get_or_create_session();
+            touch_active_session();
             log(&format!("📤 Sending to OpenClaw (session: {})...", session));
 
             let (system_prompt, max_tokens) = { 
