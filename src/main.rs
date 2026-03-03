@@ -1160,10 +1160,16 @@ fn check_session_command(transcript: &str) -> Option<SessionCommand> {
         _ => {
             // Direct session name match — no "switch session" prefix needed
             // since codenames are unique enough to not clash with normal speech
-            let transcript_lower = transcript.trim().to_lowercase();
+            let transcript_clean: String = transcript.trim().to_lowercase()
+                .chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect();
+            let transcript_clean = transcript_clean.trim();
             let sessions = load_sessions();
-            if sessions.iter().any(|s| s.name.to_lowercase() == transcript_lower) {
-                Some(SessionCommand::SwitchSession(transcript_lower))
+            if sessions.iter().any(|s| {
+                let name_clean: String = s.name.to_lowercase()
+                    .chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect();
+                name_clean.trim() == transcript_clean
+            }) {
+                Some(SessionCommand::SwitchSession(transcript_clean.to_string()))
             } else {
                 None
             }
