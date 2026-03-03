@@ -474,9 +474,8 @@ fn start_viewer() {
                         let sid = session.id.clone();
                         save_sessions(&sessions);
                         let _ = std::fs::write(SESSION_FILE.as_str(), &sid);
-                        // Update live.md to show the new session
-                        let live_content = format!("{}Switched to **{}**\n\n---\n", session_header(), name);
-                        let _ = std::fs::write(LIVE_LOG.as_str(), live_content);
+                        // Restore live view from this session's history
+                        restore_live_from_history();
                         rouille::Response::json(&serde_json::json!({"ok": true, "name": name}))
                     } else {
                         rouille::Response::json(&serde_json::json!({"ok": false, "error": "Session not found"}))
@@ -893,6 +892,23 @@ fn update_live_thinking(user: &str) {
     let _ = std::fs::write(LIVE_LOG.as_str(), content);
 }
 
+fn restore_live_from_history() {
+    let path = conversation_log_path();
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        // Find the last conversation entry (split on "---")
+        let entries: Vec<&str> = content.split("\n---\n").collect();
+        // Get the last non-empty entry
+        if let Some(last) = entries.iter().rev().find(|e| !e.trim().is_empty()) {
+            let live_content = format!("{}{}\n---\n", session_header(), last.trim());
+            let _ = std::fs::write(LIVE_LOG.as_str(), live_content);
+            return;
+        }
+    }
+    // No history — show a clean slate
+    let live_content = format!("{}Hold the pedal and speak...\n", session_header());
+    let _ = std::fs::write(LIVE_LOG.as_str(), live_content);
+}
+
 fn update_live(user: &str, assistant: &str) {
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     let content = format!(
@@ -1114,6 +1130,7 @@ fn main() {
     migrate_sessions();
     let session = get_or_create_session();
     log(&format!("Using session: {}", session));
+    restore_live_from_history();
 
     if let Err(e) = run(config) {
         log(&format!("Fatal error: {}", e));
@@ -1387,9 +1404,8 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                     SessionCommand::SwitchSession(query) => {
                         match handle_switch_session(&query) {
                             Ok(name) => {
-                                let msg = format!("Switched to {}", name);
-                                log(&format!("✅ {}", msg));
-                                update_live("Switch session", &msg);
+                                log(&format!("✅ Switched to {}", name));
+                                restore_live_from_history();
                             }
                             Err(e) => {
                                 log(&format!("❌ {}", e));
