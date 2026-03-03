@@ -52,10 +52,12 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             margin: 0;
             padding: 0;
         }
-        #tabs {
+        #top-bar {
             position: sticky;
             top: 0;
             z-index: 10;
+        }
+        #tabs {
             background: #161b22;
             border-bottom: 1px solid #30363d;
             display: flex;
@@ -150,15 +152,17 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
     </style>
 </head>
 <body>
-    <div id="tabs">
-        <div class="tab active" data-view="live" onclick="switchTab('live')">
-            <span class="dot live"></span>Live
+    <div id="top-bar">
+        <div id="tabs">
+            <div class="tab active" data-view="live" onclick="switchTab('live')">
+                <span class="dot live"></span>Live
+            </div>
+            <div class="tab" data-view="history" onclick="switchTab('history')">
+                <span class="dot history"></span>History
+            </div>
         </div>
-        <div class="tab" data-view="history" onclick="switchTab('history')">
-            <span class="dot history"></span>History
-        </div>
+        <div id="session-bar"></div>
     </div>
-    <div id="session-bar"></div>
     <div id="content">Waiting for recording...</div>
     <div id="status"><span class="disconnected">●</span> <span id="status-text">Disconnected</span></div>
     <script>
