@@ -271,12 +271,14 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         }, 5000);
 
         // Poll for voice-triggered view switches
+        let lastServerView = 'live';
         setInterval(() => {
             fetch('/view')
                 .then(r => r.text())
                 .then(view => {
                     view = view.trim();
-                    if (view && view !== currentView) {
+                    if (view && view !== lastServerView) {
+                        lastServerView = view;
                         switchTab(view);
                     }
                 })
@@ -296,7 +298,13 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                 btn.onclick = () => {
                     if (!s.active) {
                         fetch('/session/switch?id=' + encodeURIComponent(s.id), {method:'POST'})
-                            .then(() => { fetchSessions(); fetchHistory(); });
+                            .then(() => {
+                                fetchSessions();
+                                fetchHistory();
+                                if (currentView === 'history') {
+                                    setTimeout(fetchHistory, 300);
+                                }
+                            });
                     }
                 };
                 sessionBar.appendChild(btn);
