@@ -127,11 +127,19 @@ fn update_live_recording(seconds: f64) {
     let content = format!(
         "## 🎙️ Recording{} ({}s)
 
-Release pedal to transcribe...
+Release pedal to transcribe... (say \"ignore this\" to cancel)
 ---
 ",
         dots, seconds
     );
+    let _ = std::fs::write(LIVE_LOG, content);
+}
+
+fn update_live_cancelled() {
+    let content = "## ❌ Transcription cancelled by user
+
+---
+".to_string();
     let _ = std::fs::write(LIVE_LOG, content);
 }
 
@@ -287,6 +295,10 @@ fn beep_up() {
     play_sound("beep-up");
 }
 
+fn beep_abort() {
+    play_sound("beep-abort");
+}
+
 fn notify() {
     play_sound("notify");
 }
@@ -333,6 +345,7 @@ fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let thinking = Arc::new(AtomicBool::new(false));
     // Flag for session reset confirmation flow
     let awaiting_session_reset = Arc::new(AtomicBool::new(false));
+    let abort_recording = Arc::new(AtomicBool::new(false));
 
     let host = cpal::default_host();
     let device = host.default_input_device().ok_or("No input device")?;
@@ -376,7 +389,8 @@ fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let awaiting_session_reset2 = awaiting_session_reset.clone();
 
     std::thread::spawn(move || {
-        if let Err(e) = midi_listener(recording2, pedal_down2, audio2, config2, recording_start2, thinking2, awaiting_session_reset2) {
+        let abort_recording2 = abort_recording.clone();
+        if let Err(e) = midi_listener(recording2, pedal_down2, audio2, config2, recording_start2, thinking2, awaiting_session_reset2, abort_recording2) {
             log(&format!("MIDI error: {}", e));
         }
     });
@@ -392,6 +406,7 @@ fn midi_listener(
     recording_start: Arc<Mutex<Option<std::time::Instant>>>,
     thinking: Arc<AtomicBool>,
     awaiting_session_reset: Arc<AtomicBool>,
+    abort_recording: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut midi_in = MidiInput::new("stomp_claw")?;
     midi_in.ignore(Ignore::None);
@@ -420,6 +435,7 @@ fn midi_listener(
                     let pd = pedal_down.clone();
                     let rs = recording_start.clone();
                     let audio = audio_data.clone();
+                    let abort = abort_recording.clone();
                     *rs.lock().unwrap() = Some(std::time::Instant::now());
                     std::thread::spawn(move || {
                         let client = Client::builder().timeout(std::time::Duration::from_secs(10)).build().unwrap();
@@ -432,6 +448,15 @@ fn midi_listener(
                                     if let Some(text) = send_partial_transcription(&samples, &client) {
                                         log(&format!("📝 Partial: {}", text));
                                         update_live_with_partial(&text);
+                                        // Check for cancel keywords (full phrases)
+                                        let lower = text.to_lowercase();
+                                        if lower.contains("ignore this") || lower.contains("never mind") || lower.contains("forget it") || lower.contains("scratch that") {
+                                            log("🛑 CANCEL keyword detected");
+                                            beep_abort();
+                                            update_live_cancelled();
+                                            abort.store(true, Ordering::Relaxed);
+                                            break;
+                                        }
                                     }
                                 } else {
                                     update_live_recording(elapsed);
@@ -443,19 +468,29 @@ fn midi_listener(
                 } else if msg[2] == 0 && pedal_down.load(Ordering::Relaxed) {
                     log("👟 PEDAL UP");
                     beep_up();
+                    
+                    // Check if recording was aborted
+                    let was_aborted = abort_recording.load(Ordering::Relaxed);
+                    abort_recording.store(false, Ordering::Relaxed);  // Reset for next time
+                    
                     recording.store(false, Ordering::Relaxed);
                     pedal_down.store(false, Ordering::Relaxed);
-                    let samples = audio_data.lock().unwrap().clone();
-                    let config = config.clone();
-                    let thinking = thinking.clone();
-                    let awaiting_session_reset = awaiting_session_reset.clone();
-                    std::thread::spawn(move || {
-                        if let Err(e) = process(samples, config, thinking.clone(), awaiting_session_reset) {
-                            thinking.store(false, Ordering::Relaxed);
-                            log(&format!("Processing error: {}", e));
-                            update_live("Error", &format!("Something went wrong: {}", e));
-                        }
-                    });
+                    
+                    if was_aborted {
+                        log("🛑 Recording aborted (already handled)");
+                    } else {
+                        let samples = audio_data.lock().unwrap().clone();
+                        let config = config.clone();
+                        let thinking = thinking.clone();
+                        let awaiting_session_reset = awaiting_session_reset.clone();
+                        std::thread::spawn(move || {
+                            if let Err(e) = process(samples, config, thinking.clone(), awaiting_session_reset) {
+                                thinking.store(false, Ordering::Relaxed);
+                                log(&format!("Processing error: {}", e));
+                                update_live("Error", &format!("Something went wrong: {}", e));
+                            }
+                        });
+                    }
                 }
             }
         },

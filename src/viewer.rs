@@ -34,8 +34,8 @@ const HTML: &str = r#"<!DOCTYPE html>
         .sub-heading { color: #d2a8ff; font-weight: bold; }
         .you-said { color: #3fb950; font-weight: bold; }
         .user-text { color: #7ee787; }
-        .alan-replied { color: #d2a8ff; font-weight: bold; }
-        .alan-text { color: #f0e6ff; }
+        .alan-replied { color: #4488ff; font-weight: bold; }
+        .alan-text { color: #aaddff; }
         .recording { color: #f0883e; font-weight: bold; }
         .thinking { color: #d29922; font-weight: bold; }
         .separator { color: #30363d; }
