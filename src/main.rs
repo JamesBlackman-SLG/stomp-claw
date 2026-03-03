@@ -113,6 +113,40 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         }
         .connected { color: #3fb950; }
         .disconnected { color: #f85149; }
+        #session-bar {
+            background: #0d1117;
+            border-bottom: 1px solid #30363d;
+            padding: 8px 20px;
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .session-btn {
+            padding: 4px 14px;
+            border-radius: 14px;
+            border: 1px solid #30363d;
+            background: #161b22;
+            color: #8b949e;
+            cursor: pointer;
+            font-size: 12px;
+            font-family: inherit;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .session-btn:hover { border-color: #58a6ff; color: #c9d1d9; }
+        .session-btn.active {
+            background: #1f6feb;
+            border-color: #1f6feb;
+            color: #fff;
+        }
+        .session-btn.new-btn {
+            border-style: dashed;
+            color: #58a6ff;
+        }
+        .session-btn.new-btn:hover {
+            background: #1f6feb22;
+        }
     </style>
 </head>
 <body>
@@ -124,6 +158,7 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             <span class="dot history"></span>History
         </div>
     </div>
+    <div id="session-bar"></div>
     <div id="content">Waiting for recording...</div>
     <div id="status"><span class="disconnected">●</span> <span id="status-text">Disconnected</span></div>
     <script>
@@ -248,6 +283,50 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                 .catch(() => {});
         }, 500);
 
+        // Session bar
+        const sessionBar = document.getElementById('session-bar');
+        let lastSessionJson = '';
+
+        function renderSessions(sessions) {
+            sessionBar.innerHTML = '';
+            for (const s of sessions) {
+                const btn = document.createElement('button');
+                btn.className = 'session-btn' + (s.active ? ' active' : '');
+                btn.textContent = s.name;
+                btn.onclick = () => {
+                    if (!s.active) {
+                        fetch('/session/switch?id=' + encodeURIComponent(s.id), {method:'POST'})
+                            .then(() => fetchSessions());
+                    }
+                };
+                sessionBar.appendChild(btn);
+            }
+            const newBtn = document.createElement('button');
+            newBtn.className = 'session-btn new-btn';
+            newBtn.textContent = '+ New';
+            newBtn.onclick = () => {
+                fetch('/session/new', {method:'POST'})
+                    .then(() => fetchSessions());
+            };
+            sessionBar.appendChild(newBtn);
+        }
+
+        function fetchSessions() {
+            fetch('/sessions')
+                .then(r => r.json())
+                .then(sessions => {
+                    const json = JSON.stringify(sessions);
+                    if (json !== lastSessionJson) {
+                        lastSessionJson = json;
+                        renderSessions(sessions);
+                    }
+                })
+                .catch(() => {});
+        }
+
+        fetchSessions();
+        setInterval(fetchSessions, 2000);
+
         connect();
     </script>
 </body>
@@ -361,6 +440,58 @@ fn start_viewer() {
                 let content = fs::read_to_string(&path)
                     .unwrap_or_else(|_| "No history for this session yet.".to_string());
                 rouille::Response::text(content)
+            },
+            (GET) ["/sessions"] => {
+                let sessions = load_sessions();
+                let active_id = get_active_session_id();
+                let items: Vec<serde_json::Value> = sessions.iter().map(|s| {
+                    serde_json::json!({
+                        "id": s.id,
+                        "name": s.name,
+                        "active": s.id == active_id,
+                    })
+                }).collect();
+                rouille::Response::json(&items)
+            },
+            (POST) ["/session/switch"] => {
+                if let Some(id) = request.get_param("id") {
+                    let mut sessions = load_sessions();
+                    if let Some(session) = sessions.iter_mut().find(|s| s.id == id) {
+                        session.last_used = chrono::Local::now().to_rfc3339();
+                        let name = session.name.clone();
+                        let sid = session.id.clone();
+                        save_sessions(&sessions);
+                        let _ = std::fs::write(SESSION_FILE.as_str(), &sid);
+                        rouille::Response::json(&serde_json::json!({"ok": true, "name": name}))
+                    } else {
+                        rouille::Response::json(&serde_json::json!({"ok": false, "error": "Session not found"}))
+                            .with_status_code(404)
+                    }
+                } else {
+                    rouille::Response::json(&serde_json::json!({"ok": false, "error": "Missing id param"}))
+                        .with_status_code(400)
+                }
+            },
+            (POST) ["/session/new"] => {
+                let name = handle_new_session();
+                let id = get_active_session_id();
+                rouille::Response::json(&serde_json::json!({"ok": true, "name": name, "id": id}))
+            },
+            (POST) ["/session/rename"] => {
+                if let Some(name) = request.get_param("name") {
+                    match handle_rename_session(&name) {
+                        Ok(msg) => rouille::Response::json(&serde_json::json!({"ok": true, "message": msg})),
+                        Err(e) => rouille::Response::json(&serde_json::json!({"ok": false, "error": e}))
+                            .with_status_code(400),
+                    }
+                } else {
+                    rouille::Response::json(&serde_json::json!({"ok": false, "error": "Missing name param"}))
+                        .with_status_code(400)
+                }
+            },
+            (POST) ["/session/delete"] => {
+                let deleted = handle_delete_session_confirmed();
+                rouille::Response::json(&serde_json::json!({"ok": true, "deleted": deleted}))
             },
             _ => {
                 rouille::Response {
@@ -1219,7 +1350,6 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                         let msg = format!("New session started: {}", name);
                         log(&format!("✅ {}", msg));
                         update_live("New session", &msg);
-                        speak(&msg);
                     }
                     SessionCommand::SwitchSession(query) => {
                         match handle_switch_session(&query) {
@@ -1227,7 +1357,6 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                                 let msg = format!("Switched to {}", name);
                                 log(&format!("✅ {}", msg));
                                 update_live("Switch session", &msg);
-                                speak(&msg);
                             }
                             Err(e) => {
                                 log(&format!("❌ {}", e));
@@ -1240,14 +1369,12 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                         let msg = handle_list_sessions();
                         log(&format!("📋 {}", msg));
                         update_live("Sessions", &msg);
-                        speak(&msg);
                     }
                     SessionCommand::RenameSession(new_name) => {
                         match handle_rename_session(&new_name) {
                             Ok(msg) => {
                                 log(&format!("✅ {}", msg));
                                 update_live("Rename session", &msg);
-                                speak(&msg);
                             }
                             Err(e) => {
                                 log(&format!("❌ {}", e));
