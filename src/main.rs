@@ -1134,6 +1134,21 @@ fn command_words(transcript: &str) -> Vec<String> {
         .collect()
 }
 
+fn levenshtein(a: &str, b: &str) -> usize {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr = vec![0; b.len() + 1];
+    for i in 1..=a.len() {
+        curr[0] = i;
+        for j in 1..=b.len() {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
+}
+
 fn check_session_command(transcript: &str) -> Option<SessionCommand> {
     let words = command_words(transcript);
     let slice: Vec<&str> = words.iter().map(|w| w.as_str()).collect();
@@ -1158,21 +1173,31 @@ fn check_session_command(transcript: &str) -> Option<SessionCommand> {
             Some(SessionCommand::RenameSession(rest.join(" ")))
         }
         _ => {
-            // Direct session name match — no "switch session" prefix needed
-            // since codenames are unique enough to not clash with normal speech
+            // Direct session name match with fuzzy matching — STT often mangles words
             let transcript_clean: String = transcript.trim().to_lowercase()
                 .chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect();
             let transcript_clean = transcript_clean.trim();
+            let word_count = transcript_clean.split_whitespace().count();
+            if word_count < 2 || word_count > 4 {
+                return None;
+            }
             let sessions = load_sessions();
-            if sessions.iter().any(|s| {
+            let mut best_match: Option<(String, f64)> = None;
+            for s in &sessions {
                 let name_clean: String = s.name.to_lowercase()
                     .chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect();
-                name_clean.trim() == transcript_clean
-            }) {
-                Some(SessionCommand::SwitchSession(transcript_clean.to_string()))
-            } else {
-                None
+                let name_clean = name_clean.trim();
+                let dist = levenshtein(transcript_clean, name_clean);
+                let max_len = transcript_clean.len().max(name_clean.len());
+                if max_len == 0 { continue; }
+                let normalized = dist as f64 / max_len as f64;
+                if normalized <= 0.35 {
+                    if best_match.as_ref().map_or(true, |(_, d)| normalized < *d) {
+                        best_match = Some((s.name.clone(), normalized));
+                    }
+                }
             }
+            best_match.map(|(name, _)| SessionCommand::SwitchSession(name))
         }
     }
 }
