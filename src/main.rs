@@ -1559,13 +1559,11 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                         let msg = format!("Session '{}' deleted.", deleted);
                         log(&format!("✅ {}", msg));
                         update_live("Delete session", &msg);
-                        speak(&msg);
                         return Ok(());
                     }
                     _ => {
                         log("❌ Delete session cancelled");
                         update_live("Delete session", "Cancelled.");
-                        speak("Cancelled.");
                         return Ok(());
                     }
                 }
@@ -1589,7 +1587,6 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                             Err(e) => {
                                 log(&format!("❌ {}", e));
                                 update_live("Switch session", &e);
-                                speak(&e);
                             }
                         }
                     }
@@ -1607,7 +1604,6 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                             Err(e) => {
                                 log(&format!("❌ {}", e));
                                 update_live("Rename session", &e);
-                                speak(&e);
                             }
                         }
                     }
@@ -1615,7 +1611,6 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                         log("🗑️ Delete session requested, awaiting confirmation");
                         awaiting_session_reset.store(true, Ordering::Relaxed);
                         update_live(&transcript, "Delete this session? Say **yes** or **no**.");
-                        speak("Delete this session? Say yes or no.");
                     }
                 }
                 return Ok(());
@@ -1667,7 +1662,6 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                     let msg = format!("Switched to {} view.", view);
                     log(&format!("👁️ {}", msg));
                     update_live(&transcript, &msg);
-                    speak(&msg);
                 }
                 return Ok::<_, Box<dyn std::error::Error>>(());
             }
