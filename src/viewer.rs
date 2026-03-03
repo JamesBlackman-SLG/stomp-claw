@@ -8,6 +8,8 @@ use std::thread;
 use std::time::Duration;
 
 const LIVE_FILE: &str = "/tmp/stomp-claw-live.md";
+const SESSION_FILE: &str = "/tmp/stomp-claw-session.txt";
+const CONVERSATION_LOG_DIR: &str = "/tmp/stomp-claw-conversations";
 const PORT: &str = "localhost:8765";
 
 const HTML: &str = r#"<!DOCTYPE html>
@@ -24,11 +26,49 @@ const HTML: &str = r#"<!DOCTYPE html>
             font-size: 16px;
             line-height: 1.7;
             margin: 0;
-            padding: 32px 20px;
+            padding: 0;
+        }
+        #tabs {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            padding: 0 20px;
+        }
+        .tab {
+            padding: 12px 24px;
+            cursor: pointer;
+            color: #8b949e;
+            border-bottom: 2px solid transparent;
+            transition: all 0.15s;
+            user-select: none;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        .tab:hover { color: #c9d1d9; }
+        .tab.active {
+            color: #58a6ff;
+            border-bottom-color: #58a6ff;
+        }
+        .tab .dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .tab .dot.live { background: #3fb950; animation: pulse 2s infinite; }
+        .tab .dot.history { background: #8b949e; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
         }
         #content {
             max-width: 800px;
             margin: 0 auto;
+            padding: 32px 20px;
         }
         .heading { color: #58a6ff; font-weight: bold; }
         .sub-heading { color: #d2a8ff; font-weight: bold; }
@@ -52,6 +92,14 @@ const HTML: &str = r#"<!DOCTYPE html>
     </style>
 </head>
 <body>
+    <div id="tabs">
+        <div class="tab active" data-view="live" onclick="switchTab('live')">
+            <span class="dot live"></span>Live
+        </div>
+        <div class="tab" data-view="history" onclick="switchTab('history')">
+            <span class="dot history"></span>History
+        </div>
+    </div>
     <div id="content">Waiting for recording...</div>
     <div id="status"><span class="disconnected">●</span> <span id="status-text">Disconnected</span></div>
     <script>
@@ -59,18 +107,21 @@ const HTML: &str = r#"<!DOCTYPE html>
         const statusEl = document.getElementById('status-text');
         const dot = document.querySelector('#status span');
 
+        let currentView = 'live';
+        let liveContent = 'Waiting for recording...';
+        let historyContent = '';
+        let eventSource = null;
+
         function render(text) {
             if (!text || text.trim() === '') {
-                text = 'Waiting for recording...';
+                text = currentView === 'live' ? 'Waiting for recording...' : 'No history yet.';
             }
 
-            // Split into lines and process each
             const lines = text.split('\\n');
             let html = '';
-            let section = 'none'; // tracks whether we're in user or alan text
+            let section = 'none';
 
             for (let line of lines) {
-                // Escape HTML
                 line = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
                 if (line.match(/^##\s+.*Recording/)) {
@@ -103,25 +154,59 @@ const HTML: &str = r#"<!DOCTYPE html>
             contentEl.innerHTML = html;
         }
 
-        function connect() {
-            const evt = new EventSource('/events');
+        function switchTab(view) {
+            currentView = view;
+            document.querySelectorAll('.tab').forEach(t => {
+                t.classList.toggle('active', t.dataset.view === view);
+            });
 
-            evt.onmessage = (e) => {
-                render(e.data);
+            if (view === 'live') {
+                render(liveContent);
+            } else {
+                fetchHistory();
+            }
+        }
+
+        function fetchHistory() {
+            fetch('/history')
+                .then(r => r.text())
+                .then(text => {
+                    // Escape newlines to match SSE format so render() works the same
+                    historyContent = text.replace(/\\/g, '\\\\').replace(/\n/g, '\\n');
+                    if (currentView === 'history') {
+                        render(historyContent);
+                        window.scrollTo(0, document.body.scrollHeight);
+                    }
+                });
+        }
+
+        function connect() {
+            eventSource = new EventSource('/events');
+
+            eventSource.onmessage = (e) => {
+                liveContent = e.data;
+                if (currentView === 'live') {
+                    render(liveContent);
+                }
             };
 
-            evt.onopen = () => {
+            eventSource.onopen = () => {
                 statusEl.textContent = 'Connected';
                 dot.className = 'connected';
             };
 
-            evt.onerror = () => {
+            eventSource.onerror = () => {
                 statusEl.textContent = 'Reconnecting...';
                 dot.className = 'disconnected';
-                evt.close();
+                eventSource.close();
                 setTimeout(connect, 1000);
             };
         }
+
+        // Refresh history periodically when on history tab
+        setInterval(() => {
+            if (currentView === 'history') fetchHistory();
+        }, 5000);
 
         connect();
     </script>
@@ -212,6 +297,15 @@ fn main() {
                     data: rouille::ResponseBody::from_reader(Box::new(reader)),
                     upgrade: None,
                 }
+            },
+            (GET) ["/history"] => {
+                let session = fs::read_to_string(SESSION_FILE)
+                    .unwrap_or_else(|_| "unknown".to_string())
+                    .trim().to_string();
+                let path = format!("{}/{}.md", CONVERSATION_LOG_DIR, session);
+                let content = fs::read_to_string(&path)
+                    .unwrap_or_else(|_| "No history for this session yet.".to_string());
+                rouille::Response::text(content)
             },
             _ => {
                 rouille::Response {

@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use tempfile::NamedTempFile;
 
 const LOG_FILE: &str = "/tmp/stomp-claw.log";
-const CONVERSATION_LOG: &str = "/tmp/stomp-claw-conversation.md";
+const CONVERSATION_LOG_DIR: &str = "/tmp/stomp-claw-conversations";
 const LIVE_LOG: &str = "/tmp/stomp-claw-live.md";
 const PEDAL_CC: u8 = 85;
 const NEMO_URL: &str = "http://localhost:5051";
@@ -172,9 +172,16 @@ fn update_live(user: &str, assistant: &str) {
     let _ = std::fs::write(LIVE_LOG, content);
 }
 
+fn conversation_log_path() -> String {
+    let session = std::fs::read_to_string(SESSION_FILE).unwrap_or_else(|_| "unknown".to_string()).trim().to_string();
+    let _ = std::fs::create_dir_all(CONVERSATION_LOG_DIR);
+    format!("{}/{}.md", CONVERSATION_LOG_DIR, session)
+}
+
 fn log_conversation(user: &str, assistant: &str) {
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(CONVERSATION_LOG) {
+    let path = conversation_log_path();
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
         let _ = writeln!(f, "## {} - You said:\n{}\n\n### Alan replied:\n{}\n---", timestamp, user, assistant);
     }
 }
@@ -662,7 +669,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                 .header("Content-Type", "application/json")
                 .header("x-openclaw-session-key", &session)
                 .json(&payload)
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(std::time::Duration::from_secs(120))
                 .send().await?;
 
             let reply_text = resp2.text().await?;
