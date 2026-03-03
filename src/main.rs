@@ -626,6 +626,22 @@ fn handle_switch_session(query: &str) -> Result<String, String> {
         return Err("No sessions available.".to_string());
     }
 
+    // Convert spoken number words to digits
+    let query = match query.to_lowercase().trim() {
+        "one" | "won" => "1",
+        "two" | "to" | "too" => "2",
+        "three" | "tree" => "3",
+        "four" | "for" | "fore" => "4",
+        "five" => "5",
+        "six" | "sicks" => "6",
+        "seven" => "7",
+        "eight" | "ate" => "8",
+        "nine" => "9",
+        "ten" => "10",
+        other => other,
+    }.to_string();
+    let query = query.as_str();
+
     // Try as number first (1-based index)
     if let Ok(num) = query.parse::<usize>() {
         if num >= 1 && num <= sessions.len() {
