@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use futures::StreamExt;
 use notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode, Watcher};
+use rand::seq::SliceRandom;
 use tempfile::NamedTempFile;
 
 fn base_dir() -> PathBuf {
@@ -584,6 +585,47 @@ fn session_header() -> String {
     format!("**Session: {}**\n\n", get_active_session_name())
 }
 
+const SESSION_ADJECTIVES: &[&str] = &[
+    "amber", "arctic", "ashen", "azure", "basalt", "blazing", "boreal", "brazen",
+    "brisk", "bronze", "cedar", "cobalt", "copper", "coral", "crimson", "crypt",
+    "dusk", "ember", "feral", "ferric", "flint", "fossil", "frozen", "gilded",
+    "glacial", "granite", "hollow", "hushed", "iron", "ivory", "jagged", "lunar",
+    "molten", "moss", "mystic", "neon", "nimble", "obsidian", "onyx", "opaque",
+    "pale", "phantom", "plume", "quartz", "riven", "runic", "rustic", "sable",
+    "scarlet", "silver", "slate", "smoked", "solar", "stark", "tawny", "umbral",
+    "velvet", "vivid", "woven", "zinc",
+];
+
+const SESSION_NOUNS: &[&str] = &[
+    "anchor", "anvil", "badger", "bastion", "beacon", "bison", "cairn", "chalice",
+    "cipher", "compass", "condor", "coyote", "dagger", "drake", "falcon", "forge",
+    "frigate", "garnet", "griffin", "harbor", "herald", "hornet", "jackal", "javelin",
+    "lantern", "locus", "mammoth", "mantis", "marlin", "monolith", "nexus", "obelisk",
+    "osprey", "outpost", "panther", "pebble", "pilgrim", "plinth", "prism", "pylon",
+    "quarry", "raven", "ridgeback", "scepter", "schooner", "sentinel", "serpent",
+    "sigil", "sparrow", "spindle", "summit", "talon", "tempest", "thistle", "trident",
+    "tundra", "vanguard", "vortex", "warden", "zenith",
+];
+
+fn generate_session_name() -> String {
+    let existing: Vec<String> = load_sessions().iter().map(|s| s.name.clone()).collect();
+    let mut rng = rand::thread_rng();
+
+    for _ in 0..100 {
+        let adj = SESSION_ADJECTIVES.choose(&mut rng).unwrap();
+        let noun = SESSION_NOUNS.choose(&mut rng).unwrap();
+        let name = format!("{} {}", adj, noun);
+        if !existing.contains(&name) {
+            return name;
+        }
+    }
+
+    // Fallback: append number to guarantee uniqueness
+    let adj = SESSION_ADJECTIVES.choose(&mut rng).unwrap();
+    let noun = SESSION_NOUNS.choose(&mut rng).unwrap();
+    format!("{} {} {}", adj, noun, existing.len() + 1)
+}
+
 fn migrate_sessions() {
     if std::path::Path::new(SESSIONS_FILE.as_str()).exists() {
         return;
@@ -596,7 +638,7 @@ fn migrate_sessions() {
         if !id.is_empty() {
             let session = Session {
                 id,
-                name: "Session 1".to_string(),
+                name: generate_session_name(),
                 created_at: now.clone(),
                 last_used: now,
             };
@@ -608,7 +650,7 @@ fn migrate_sessions() {
 
     let session = Session {
         id: format!("stomp-{}", uuid::Uuid::new_v4()),
-        name: "Session 1".to_string(),
+        name: generate_session_name(),
         created_at: now.clone(),
         last_used: now,
     };
@@ -620,10 +662,9 @@ fn migrate_sessions() {
 fn handle_new_session() -> String {
     let now = chrono::Local::now().to_rfc3339();
     let mut sessions = load_sessions();
-    let next_num = sessions.len() + 1;
     let session = Session {
         id: format!("stomp-{}", uuid::Uuid::new_v4()),
-        name: format!("Session {}", next_num),
+        name: generate_session_name(),
         created_at: now.clone(),
         last_used: now,
     };
@@ -743,7 +784,7 @@ fn handle_delete_session_confirmed() -> String {
         let now = chrono::Local::now().to_rfc3339();
         let new_session = Session {
             id: format!("stomp-{}", uuid::Uuid::new_v4()),
-            name: "Session 1".to_string(),
+            name: generate_session_name(),
             created_at: now.clone(),
             last_used: now,
         };
