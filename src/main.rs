@@ -11,21 +11,27 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use futures::StreamExt;
 use notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode, Watcher};
 use tempfile::NamedTempFile;
 
-const LOG_FILE: &str = "/tmp/stomp-claw.log";
-const CONVERSATION_LOG_DIR: &str = "/tmp/stomp-claw-conversations";
-const LIVE_LOG: &str = "/tmp/stomp-claw-live.md";
+fn base_dir() -> PathBuf {
+    dirs::home_dir().expect("No home directory found").join(".stomp-claw")
+}
+
+static LOG_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("stomp-claw.log").to_string_lossy().to_string());
+static CONVERSATION_LOG_DIR: LazyLock<String> = LazyLock::new(|| base_dir().join("conversations").to_string_lossy().to_string());
+static LIVE_LOG: LazyLock<String> = LazyLock::new(|| base_dir().join("live.md").to_string_lossy().to_string());
+static SESSION_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("session.txt").to_string_lossy().to_string());
+static CONFIG_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("config.toml").to_string_lossy().to_string());
+static VIEW_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("view.txt").to_string_lossy().to_string());
+
 const PEDAL_CC: u8 = 85;
 const NEMO_URL: &str = "http://localhost:5051";
 const TARGET_SAMPLE_RATE: u32 = 16000;
 const OPENCLAW_URL: &str = "http://127.0.0.1:18789/v1/chat/completions";
 const OPENCLAW_TOKEN: &str = "06b21a7fafad855670f81018f3a455edccaf5dedc470fa0b";
-const SESSION_FILE: &str = "/tmp/stomp-claw-session.txt";
-const CONFIG_FILE: &str = "/home/jb/.config/stomp-claw/config.toml";
 const AUDIO_SINK: &str = "alsa_output.pci-0000_0d_00.4.analog-stereo";
 const VIEWER_PORT: &str = "localhost:8765";
 
@@ -253,14 +259,14 @@ struct ViewerFileReader {
 
 impl ViewerFileReader {
     fn new() -> Self {
-        let initial = fs::read_to_string(LIVE_LOG).unwrap_or_else(|_| "Waiting for recording...".to_string());
+        let initial = fs::read_to_string(LIVE_LOG.as_str()).unwrap_or_else(|_| "Waiting for recording...".to_string());
         Self { last_content: initial, first_read: true }
     }
 }
 
 impl std::io::Read for ViewerFileReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let content = fs::read_to_string(LIVE_LOG)
+        let content = fs::read_to_string(LIVE_LOG.as_str())
             .unwrap_or_else(|_| "Waiting for recording...".to_string());
 
         if self.first_read || content != self.last_content {
@@ -299,15 +305,15 @@ fn start_viewer() {
             NotifyConfig::default().with_poll_interval(std::time::Duration::from_secs(1)),
         ).unwrap();
 
-        let path = PathBuf::from(LIVE_LOG);
+        let path = PathBuf::from(LIVE_LOG.as_str());
         if let Some(parent) = path.parent() {
             let _ = watcher.watch(parent, RecursiveMode::NonRecursive);
         }
 
         loop {
             if let Ok(Ok(event)) = watcher_rx.recv_timeout(std::time::Duration::from_millis(500)) {
-                if event.paths.iter().any(|p| p.to_string_lossy() == LIVE_LOG) {
-                    let _ = tx.send(PathBuf::from(LIVE_LOG));
+                if event.paths.iter().any(|p| p.to_string_lossy() == *LIVE_LOG) {
+                    let _ = tx.send(PathBuf::from(LIVE_LOG.as_str()));
                 }
             }
         }
@@ -333,7 +339,7 @@ fn start_viewer() {
                 }
             },
             (GET) ["/view"] => {
-                let view = fs::read_to_string(VIEW_FILE)
+                let view = fs::read_to_string(VIEW_FILE.as_str())
                     .unwrap_or_else(|_| "live".to_string())
                     .trim().to_string();
                 rouille::Response::text(view)
@@ -341,16 +347,16 @@ fn start_viewer() {
             (GET) ["/view/set"] => {
                 if let Some(v) = request.get_param("v") {
                     if v == "live" || v == "history" {
-                        let _ = fs::write(VIEW_FILE, &v);
+                        let _ = fs::write(VIEW_FILE.as_str(), &v);
                     }
                 }
                 rouille::Response::text("ok")
             },
             (GET) ["/history"] => {
-                let session = fs::read_to_string(SESSION_FILE)
+                let session = fs::read_to_string(SESSION_FILE.as_str())
                     .unwrap_or_else(|_| "unknown".to_string())
                     .trim().to_string();
-                let path = format!("{}/{}.md", CONVERSATION_LOG_DIR, session);
+                let path = format!("{}/{}.md", *CONVERSATION_LOG_DIR, session);
                 let content = fs::read_to_string(&path)
                     .unwrap_or_else(|_| "No history for this session yet.".to_string());
                 rouille::Response::text(content)
@@ -381,7 +387,7 @@ impl Default for Config {
 }
 
 fn load_config() -> Config {
-    if let Ok(content) = std::fs::read_to_string(CONFIG_FILE) {
+    if let Ok(content) = std::fs::read_to_string(CONFIG_FILE.as_str()) {
         if let Ok(c) = toml::from_str(&content) {
             return c;
         }
@@ -391,13 +397,13 @@ fn load_config() -> Config {
 
 fn save_config(config: &Config) {
     if let Ok(content) = toml::to_string(config) {
-        let _ = std::fs::write(CONFIG_FILE, content);
+        let _ = std::fs::write(CONFIG_FILE.as_str(), content);
     }
 }
 
 fn log(msg: &str) {
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(LOG_FILE) {
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(LOG_FILE.as_str()) {
         let _ = writeln!(f, "[{}] {}", timestamp, msg);
     }
 }
@@ -464,7 +470,7 @@ fn update_live_with_partial(text: &str) {
 ",
         text
     );
-    let _ = std::fs::write(LIVE_LOG, content);
+    let _ = std::fs::write(LIVE_LOG.as_str(), content);
 }
 
 fn update_live_recording(seconds: f64) {
@@ -477,7 +483,7 @@ Release pedal to transcribe... (say \"ignore this\" to cancel)
 ",
         dots, seconds
     );
-    let _ = std::fs::write(LIVE_LOG, content);
+    let _ = std::fs::write(LIVE_LOG.as_str(), content);
 }
 
 fn update_live_cancelled() {
@@ -485,7 +491,7 @@ fn update_live_cancelled() {
 
 ---
 ".to_string();
-    let _ = std::fs::write(LIVE_LOG, content);
+    let _ = std::fs::write(LIVE_LOG.as_str(), content);
 }
 
 fn update_live_thinking(user: &str) {
@@ -499,7 +505,7 @@ fn update_live_thinking(user: &str) {
 ",
         user, dots
     );
-    let _ = std::fs::write(LIVE_LOG, content);
+    let _ = std::fs::write(LIVE_LOG.as_str(), content);
 }
 
 fn update_live(user: &str, assistant: &str) {
@@ -514,13 +520,13 @@ fn update_live(user: &str, assistant: &str) {
 ",
         timestamp, user, assistant
     );
-    let _ = std::fs::write(LIVE_LOG, content);
+    let _ = std::fs::write(LIVE_LOG.as_str(), content);
 }
 
 fn conversation_log_path() -> String {
-    let session = std::fs::read_to_string(SESSION_FILE).unwrap_or_else(|_| "unknown".to_string()).trim().to_string();
-    let _ = std::fs::create_dir_all(CONVERSATION_LOG_DIR);
-    format!("{}/{}.md", CONVERSATION_LOG_DIR, session)
+    let session = std::fs::read_to_string(SESSION_FILE.as_str()).unwrap_or_else(|_| "unknown".to_string()).trim().to_string();
+    let _ = std::fs::create_dir_all(CONVERSATION_LOG_DIR.as_str());
+    format!("{}/{}.md", *CONVERSATION_LOG_DIR, session)
 }
 
 fn log_conversation(user: &str, assistant: &str) {
@@ -583,7 +589,7 @@ fn is_confirmation(transcript: &str) -> Option<bool> {
 
 fn reset_session() -> String {
     let session = format!("stomp-{}", uuid::Uuid::new_v4());
-    let _ = std::fs::write(SESSION_FILE, &session);
+    let _ = std::fs::write(SESSION_FILE.as_str(), &session);
     log(&format!("🔄 New session created: {}", session));
     session
 }
@@ -598,8 +604,6 @@ fn check_voice_command(transcript: &str) -> Option<bool> {
     }
 }
 
-const VIEW_FILE: &str = "/tmp/stomp-claw-view.txt";
-
 /// Check if the transcript is a viewer switch command
 fn check_view_command(transcript: &str) -> Option<&'static str> {
     let words = command_words(transcript);
@@ -611,7 +615,7 @@ fn check_view_command(transcript: &str) -> Option<&'static str> {
 }
 
 fn switch_view(view: &str) {
-    let _ = std::fs::write(VIEW_FILE, view);
+    let _ = std::fs::write(VIEW_FILE.as_str(), view);
 }
 
 #[derive(Deserialize, Debug)]
@@ -641,7 +645,7 @@ fn update_live_streaming(user: &str, partial_response: &str) {
 ",
         user, partial_response
     );
-    let _ = std::fs::write(LIVE_LOG, content);
+    let _ = std::fs::write(LIVE_LOG.as_str(), content);
 }
 
 fn get_beep_path(name: &str) -> String {
@@ -695,18 +699,20 @@ fn speak(text: &str) {
 }
 
 fn get_or_create_session() -> String {
-    if let Ok(s) = std::fs::read_to_string(SESSION_FILE) {
+    if let Ok(s) = std::fs::read_to_string(SESSION_FILE.as_str()) {
         let s = s.trim().to_string();
         if !s.is_empty() { return s; }
     }
     let session = format!("stomp-{}", uuid::Uuid::new_v4());
-    let _ = std::fs::write(SESSION_FILE, &session);
+    let _ = std::fs::write(SESSION_FILE.as_str(), &session);
     session
 }
 
 fn main() {
-    let _ = File::create(LOG_FILE);
-    let _ = std::fs::write(LIVE_LOG, "Hold the pedal and speak...\n");
+    let _ = std::fs::create_dir_all(base_dir());
+    let _ = std::fs::create_dir_all(base_dir().join("conversations"));
+    let _ = File::create(LOG_FILE.as_str());
+    let _ = std::fs::write(LIVE_LOG.as_str(), "Hold the pedal and speak...\n");
     log("🎹 Stomp Claw starting...");
     
     let config = load_config();

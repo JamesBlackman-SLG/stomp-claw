@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 cargo build --release       # Build release binary
-./start.sh                  # Kill existing, clear log, launch daemon in background
+./start.sh                  # Kill existing, launch daemon in background
 ./stop.sh                   # Kill running daemon
-./tail-log.sh               # tail -f /tmp/stomp-claw.log
+./tail-log.sh               # tail -f ~/.stomp-claw/stomp-claw.log
 ```
 
 No test suite exists. Rust 2024 edition.
@@ -27,11 +27,14 @@ Stomp Claw is a voice assistant daemon triggered by a MIDI foot pedal (Boss FS-1
 
 ## Key Files & Paths
 
-- `/tmp/stomp-claw.log` — daemon log
-- `/tmp/stomp-claw-live.md` — live status display (current recording/thinking/response)
-- `/tmp/stomp-claw-conversation.md` — append-only conversation history
-- `/tmp/stomp-claw-session.txt` — session ID for OpenClaw continuity
-- `~/.config/stomp-claw/config.toml` — persistent config (currently just `voice_enabled`)
+All state lives in `~/.stomp-claw/`:
+
+- `~/.stomp-claw/stomp-claw.log` — daemon log
+- `~/.stomp-claw/live.md` — live status display (current recording/thinking/response)
+- `~/.stomp-claw/conversations/` — per-session conversation history files
+- `~/.stomp-claw/session.txt` — session ID for OpenClaw continuity
+- `~/.stomp-claw/view.txt` — current viewer tab (live/history)
+- `~/.stomp-claw/config.toml` — persistent config (currently just `voice_enabled`)
 - `beep-down.wav`, `beep-up.wav`, `beep-up2.wav` — audio feedback played via `paplay`
 
 ## Threading Model

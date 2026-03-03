@@ -9,13 +9,10 @@ pkill -f "stomp_claw" 2>/dev/null || true
 pkill -f "stomp-claw-viewer" 2>/dev/null || true
 sleep 1
 
-# Clear old log
-rm -f /tmp/stomp-claw.log
-
 # Start stomp_claw from this directory (so it finds the beep WAVs)
 echo "Starting stomp_claw..."
 ./target/release/stomp_claw &
 
 sleep 2
-echo "stomp_claw started. Log at /tmp/stomp-claw.log"
-tail -5 /tmp/stomp-claw.log
+echo "stomp_claw started. Log at ~/.stomp-claw/stomp-claw.log"
+tail -5 ~/.stomp-claw/stomp-claw.log
