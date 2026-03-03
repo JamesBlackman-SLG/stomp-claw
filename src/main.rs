@@ -1030,7 +1030,17 @@ fn check_session_command(transcript: &str) -> Option<SessionCommand> {
         ["name", "session", rest @ ..] if !rest.is_empty() => {
             Some(SessionCommand::RenameSession(rest.join(" ")))
         }
-        _ => None,
+        _ => {
+            // Direct session name match — no "switch session" prefix needed
+            // since codenames are unique enough to not clash with normal speech
+            let transcript_lower = transcript.trim().to_lowercase();
+            let sessions = load_sessions();
+            if sessions.iter().any(|s| s.name.to_lowercase() == transcript_lower) {
+                Some(SessionCommand::SwitchSession(transcript_lower))
+            } else {
+                None
+            }
+        }
     }
 }
 
