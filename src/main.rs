@@ -10,6 +10,7 @@ use std::io::Write;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use futures::StreamExt;
 use tempfile::NamedTempFile;
 
 const LOG_FILE: &str = "/tmp/stomp-claw.log";
@@ -253,19 +254,50 @@ fn check_voice_command(transcript: &str) -> Option<bool> {
     }
 }
 
-#[derive(Deserialize, Debug)]
-struct OpenClawResponse {
-    choices: Vec<OpenClawChoice>,
+const VIEW_FILE: &str = "/tmp/stomp-claw-view.txt";
+
+/// Check if the transcript is a viewer switch command
+fn check_view_command(transcript: &str) -> Option<&'static str> {
+    let words = command_words(transcript);
+    match words.iter().map(|w| w.as_str()).collect::<Vec<_>>().as_slice() {
+        ["live", "view"] | ["show", "live"] | ["view", "live"] | ["live"] => Some("live"),
+        ["history", "view"] | ["show", "history"] | ["view", "history"] | ["history"] => Some("history"),
+        _ => None,
+    }
+}
+
+fn switch_view(view: &str) {
+    let _ = std::fs::write(VIEW_FILE, view);
 }
 
 #[derive(Deserialize, Debug)]
-struct OpenClawChoice {
-    message: OpenClawMessage,
+struct StreamChunk {
+    choices: Vec<StreamChoice>,
 }
 
 #[derive(Deserialize, Debug)]
-struct OpenClawMessage {
-    content: String,
+struct StreamChoice {
+    delta: StreamDelta,
+}
+
+#[derive(Deserialize, Debug)]
+struct StreamDelta {
+    content: Option<String>,
+}
+
+fn update_live_streaming(user: &str, partial_response: &str) {
+    let content = format!(
+        "## You said:
+{}
+
+### Alan:
+{}
+
+---
+",
+        user, partial_response
+    );
+    let _ = std::fs::write(LIVE_LOG, content);
 }
 
 fn get_beep_path(name: &str) -> String {
@@ -641,6 +673,17 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                 return Ok::<_, Box<dyn std::error::Error>>(());
             }
 
+            // Check for view switch command
+            if let Some(view) = check_view_command(&transcript) {
+                switch_view(view);
+                let msg = format!("Switched to {} view.", view);
+                log(&format!("👁️ {}", msg));
+                thinking.store(false, Ordering::Relaxed);
+                update_live(&transcript, &msg);
+                speak(&msg);
+                return Ok::<_, Box<dyn std::error::Error>>(());
+            }
+
             // Normal message - send to OpenClaw with Sonnet
             let session = get_or_create_session();
             log(&format!("📤 Sending to OpenClaw (session: {})...", session));
@@ -659,7 +702,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": &transcript}
                 ],
-                "stream": false,
+                "stream": true,
                 "max_tokens": max_tokens,
                 "user": "stomp-claw"
             });
@@ -669,21 +712,60 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                 .header("Content-Type", "application/json")
                 .header("x-openclaw-session-key", &session)
                 .json(&payload)
-                .timeout(std::time::Duration::from_secs(120))
                 .send().await?;
 
-            let reply_text = resp2.text().await?;
-            log(&format!("OpenClaw raw: {}", &reply_text[..reply_text.len().min(200)]));
+            if !resp2.status().is_success() {
+                let status = resp2.status();
+                let body = resp2.text().await.unwrap_or_default();
+                thinking.store(false, Ordering::Relaxed);
+                log(&format!("❌ OpenClaw HTTP {}: {}", status, body));
+                update_live(&transcript, &format!("❌ Error: HTTP {}", status));
+            } else {
+                let mut full_reply = String::new();
+                let mut stream = resp2.bytes_stream();
+                let mut buffer = String::new();
 
-            match serde_json::from_str::<OpenClawResponse>(&reply_text) {
-                Ok(parsed) if !parsed.choices.is_empty() => {
-                    let full_reply = &parsed.choices[0].message.content;
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk?;
+                    buffer.push_str(&String::from_utf8_lossy(&chunk));
 
-                    // Only truncate if voice is enabled
+                    // Process complete SSE lines from the buffer
+                    while let Some(newline_pos) = buffer.find('\n') {
+                        let line = buffer[..newline_pos].trim().to_string();
+                        buffer = buffer[newline_pos + 1..].to_string();
+
+                        if line.is_empty() || line.starts_with(':') {
+                            continue;
+                        }
+
+                        if let Some(data) = line.strip_prefix("data: ") {
+                            if data.trim() == "[DONE]" {
+                                break;
+                            }
+
+                            if let Ok(parsed) = serde_json::from_str::<StreamChunk>(data) {
+                                if let Some(choice) = parsed.choices.first() {
+                                    if let Some(content) = &choice.delta.content {
+                                        full_reply.push_str(content);
+                                        thinking.store(false, Ordering::Relaxed);
+                                        update_live_streaming(&transcript, &full_reply);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if full_reply.is_empty() {
+                    thinking.store(false, Ordering::Relaxed);
+                    log("❌ OpenClaw: empty streaming response");
+                    update_live(&transcript, "❌ Error: empty response");
+                } else {
+                    // Truncate if voice is enabled
                     let final_reply = {
                         let cfg = config.lock().unwrap();
                         if cfg.voice_enabled {
-                            truncate_to_sentences(full_reply, 2)
+                            truncate_to_sentences(&full_reply, 2)
                         } else {
                             full_reply.clone()
                         }
@@ -701,11 +783,6 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                     } else {
                         notify();
                     }
-                }
-                _ => {
-                    thinking.store(false, Ordering::Relaxed);
-                    log(&format!("❌ OpenClaw error: {}", reply_text));
-                    update_live(&transcript, &format!("❌ Error: {}", &reply_text[..reply_text.len().min(100)]));
                 }
             }
         } else {

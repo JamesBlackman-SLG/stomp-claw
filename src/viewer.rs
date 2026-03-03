@@ -10,6 +10,7 @@ use std::time::Duration;
 const LIVE_FILE: &str = "/tmp/stomp-claw-live.md";
 const SESSION_FILE: &str = "/tmp/stomp-claw-session.txt";
 const CONVERSATION_LOG_DIR: &str = "/tmp/stomp-claw-conversations";
+const VIEW_FILE: &str = "/tmp/stomp-claw-view.txt";
 const PORT: &str = "localhost:8765";
 
 const HTML: &str = r#"<!DOCTYPE html>
@@ -160,6 +161,9 @@ const HTML: &str = r#"<!DOCTYPE html>
                 t.classList.toggle('active', t.dataset.view === view);
             });
 
+            // Sync back so voice commands and manual clicks stay in agreement
+            fetch('/view/set?v=' + view).catch(() => {});
+
             if (view === 'live') {
                 render(liveContent);
             } else {
@@ -207,6 +211,19 @@ const HTML: &str = r#"<!DOCTYPE html>
         setInterval(() => {
             if (currentView === 'history') fetchHistory();
         }, 5000);
+
+        // Poll for voice-triggered view switches
+        setInterval(() => {
+            fetch('/view')
+                .then(r => r.text())
+                .then(view => {
+                    view = view.trim();
+                    if (view && view !== currentView) {
+                        switchTab(view);
+                    }
+                })
+                .catch(() => {});
+        }, 500);
 
         connect();
     </script>
@@ -297,6 +314,20 @@ fn main() {
                     data: rouille::ResponseBody::from_reader(Box::new(reader)),
                     upgrade: None,
                 }
+            },
+            (GET) ["/view"] => {
+                let view = fs::read_to_string(VIEW_FILE)
+                    .unwrap_or_else(|_| "live".to_string())
+                    .trim().to_string();
+                rouille::Response::text(view)
+            },
+            (GET) ["/view/set"] => {
+                if let Some(v) = request.get_param("v") {
+                    if v == "live" || v == "history" {
+                        let _ = fs::write(VIEW_FILE, &v);
+                    }
+                }
+                rouille::Response::text("ok")
             },
             (GET) ["/history"] => {
                 let session = fs::read_to_string(SESSION_FILE)
