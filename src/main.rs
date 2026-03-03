@@ -299,6 +299,10 @@ fn beep_abort() {
     play_sound("beep-abort");
 }
 
+fn beep_busy() {
+    play_sound("beep-busy");
+}
+
 fn notify() {
     play_sound("notify");
 }
@@ -346,6 +350,7 @@ fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     // Flag for session reset confirmation flow
     let awaiting_session_reset = Arc::new(AtomicBool::new(false));
     let abort_recording = Arc::new(AtomicBool::new(false));
+    let processing = Arc::new(AtomicBool::new(false));
 
     let host = cpal::default_host();
     let device = host.default_input_device().ok_or("No input device")?;
@@ -390,7 +395,8 @@ fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
 
     std::thread::spawn(move || {
         let abort_recording2 = abort_recording.clone();
-        if let Err(e) = midi_listener(recording2, pedal_down2, audio2, config2, recording_start2, thinking2, awaiting_session_reset2, abort_recording2) {
+        let processing2 = processing.clone();
+        if let Err(e) = midi_listener(recording2, pedal_down2, audio2, config2, recording_start2, thinking2, awaiting_session_reset2, abort_recording2, processing2) {
             log(&format!("MIDI error: {}", e));
         }
     });
@@ -407,6 +413,7 @@ fn midi_listener(
     thinking: Arc<AtomicBool>,
     awaiting_session_reset: Arc<AtomicBool>,
     abort_recording: Arc<AtomicBool>,
+    processing: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut midi_in = MidiInput::new("stomp_claw")?;
     midi_in.ignore(Ignore::None);
@@ -423,6 +430,12 @@ fn midi_listener(
         move |_, msg, _| {
             if msg.len() >= 3 && (msg[0] & 0xF0) == 0xB0 && msg[1] == PEDAL_CC {
                 if msg[2] == 127 && !pedal_down.load(Ordering::Relaxed) {
+                    // Check if already processing
+                    if processing.load(Ordering::Relaxed) {
+                        log("⏳ Still processing, playing busy beep");
+                        beep_busy();
+                        return;
+                    }
                     beep_down();
                     log("👟 PEDAL DOWN");
                     // Kill any existing thinking animation thread
@@ -483,8 +496,17 @@ fn midi_listener(
                         let config = config.clone();
                         let thinking = thinking.clone();
                         let awaiting_session_reset = awaiting_session_reset.clone();
+                        let processing_clone = processing.clone();
+                        
+                        // Mark as processing
+                        processing_clone.store(true, Ordering::Relaxed);
+                        
                         std::thread::spawn(move || {
-                            if let Err(e) = process(samples, config, thinking.clone(), awaiting_session_reset) {
+                            let result = process(samples, config, thinking.clone(), awaiting_session_reset);
+                            // Mark as done processing
+                            processing_clone.store(false, Ordering::Relaxed);
+                            
+                            if let Err(e) = result {
                                 thinking.store(false, Ordering::Relaxed);
                                 log(&format!("Processing error: {}", e));
                                 update_live("Error", &format!("Something went wrong: {}", e));
@@ -640,6 +662,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                 .header("Content-Type", "application/json")
                 .header("x-openclaw-session-key", &session)
                 .json(&payload)
+                .timeout(std::time::Duration::from_secs(30))
                 .send().await?;
 
             let reply_text = resp2.text().await?;
