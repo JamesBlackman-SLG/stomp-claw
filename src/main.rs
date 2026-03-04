@@ -1336,6 +1336,52 @@ fn session_tone_freq(session_index: usize) -> f32 {
     523.25 * 2.0_f32.powf(semitones / 12.0)
 }
 
+/// Play a short startup jingle via paplay.
+/// A quick ascending arpeggio that ends on the active session's note.
+fn play_startup_tune(session_index: usize) {
+    std::thread::spawn(move || {
+        let sample_rate = 48000u32;
+        let note_ms = 80u32;
+        let gap_ms = 20u32;
+        // C5, E5, G5, then the session note
+        let mut freqs = vec![523.25_f32, 659.25, 783.99];
+        let session_freq = session_tone_freq(session_index);
+        freqs.push(session_freq);
+
+        let wav_path = "/tmp/stomp-claw-startup.wav";
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate,
+            bits_per_sample: 16,
+            sample_format: HoundFormat::Int,
+        };
+
+        if let Ok(mut writer) = WavWriter::create(wav_path, spec) {
+            let fade_samples = (sample_rate as usize * 5) / 1000;
+            for freq in &freqs {
+                let note_samples = (sample_rate as usize * note_ms as usize) / 1000;
+                for i in 0..note_samples {
+                    let t = i as f32 / sample_rate as f32;
+                    let mut s = (2.0 * std::f32::consts::PI * freq * t).sin() * 0.25;
+                    if i < fade_samples { s *= i as f32 / fade_samples as f32; }
+                    if i >= note_samples - fade_samples { s *= (note_samples - 1 - i) as f32 / fade_samples as f32; }
+                    let _ = writer.write_sample((s * i16::MAX as f32) as i16);
+                }
+                // Gap between notes
+                let gap_samples = (sample_rate as usize * gap_ms as usize) / 1000;
+                for _ in 0..gap_samples {
+                    let _ = writer.write_sample(0i16);
+                }
+            }
+            let _ = writer.finalize();
+            Command::new("paplay")
+                .arg("--device").arg(AUDIO_SINK)
+                .arg(wav_path)
+                .spawn().ok();
+        }
+    });
+}
+
 /// Play a short sine-wave tone at a pitch corresponding to the session index.
 /// Generates a WAV file in /tmp and plays it via paplay (same as all other sounds).
 /// Runs in a spawned thread so it never blocks the caller.
@@ -1404,7 +1450,7 @@ fn main() {
     let session = get_or_create_session();
     log(&format!("Using session: {}", session));
     restore_live_from_history();
-    play_session_tone(get_active_session_index());
+    play_startup_tune(get_active_session_index());
 
     if let Err(e) = run(config) {
         log(&format!("Fatal error: {}", e));
