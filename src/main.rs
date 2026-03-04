@@ -1333,7 +1333,7 @@ fn session_tone_freq(session_index: usize) -> f32 {
     let octave = session_index / SCALE.len();
     let note = session_index % SCALE.len();
     let semitones = (octave * 12 + SCALE[note] as usize) as f32;
-    261.63 * 2.0_f32.powf(semitones / 12.0)
+    523.25 * 2.0_f32.powf(semitones / 12.0)
 }
 
 /// Play a short sine-wave tone at a pitch corresponding to the session index.
