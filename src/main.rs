@@ -1337,6 +1337,7 @@ fn session_tone_freq(session_index: usize) -> f32 {
 }
 
 /// Play a short sine-wave tone at a pitch corresponding to the session index.
+/// Generates a WAV file in /tmp and plays it via paplay (same as all other sounds).
 /// Runs in a spawned thread so it never blocks the caller.
 fn play_session_tone(session_index: usize) {
     std::thread::spawn(move || {
@@ -1346,9 +1347,16 @@ fn play_session_tone(session_index: usize) {
         let total_samples = (sample_rate as usize * duration_ms) / 1000;
         let fade_samples = (sample_rate as usize * 10) / 1000; // 10ms fade in/out
 
-        // Pre-generate all samples
-        let samples: Vec<f32> = (0..total_samples)
-            .map(|i| {
+        let wav_path = format!("/tmp/stomp-claw-tone-{}.wav", session_index);
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate,
+            bits_per_sample: 16,
+            sample_format: HoundFormat::Int,
+        };
+
+        if let Ok(mut writer) = WavWriter::create(&wav_path, spec) {
+            for i in 0..total_samples {
                 let t = i as f32 / sample_rate as f32;
                 let mut s = (2.0 * std::f32::consts::PI * freq * t).sin() * 0.3;
                 // Fade in
@@ -1359,62 +1367,15 @@ fn play_session_tone(session_index: usize) {
                 if i >= total_samples - fade_samples {
                     s *= (total_samples - 1 - i) as f32 / fade_samples as f32;
                 }
-                s
-            })
-            .collect();
-
-        let host = cpal::default_host();
-
-        // Find the output device matching AUDIO_SINK
-        let device = host.output_devices().ok()
-            .and_then(|mut devs| devs.find(|d| {
-                d.name().map(|n| n == AUDIO_SINK).unwrap_or(false)
-            }))
-            .or_else(|| host.default_output_device());
-
-        let device = match device {
-            Some(d) => d,
-            None => { log("⚠️ No output device for session tone"); return; }
-        };
-
-        let config = StreamConfig {
-            channels: 1,
-            sample_rate: SampleRate(sample_rate),
-            buffer_size: cpal::BufferSize::Default,
-        };
-
-        let pos = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let done = Arc::new(AtomicBool::new(false));
-        let pos2 = pos.clone();
-        let done2 = done.clone();
-        let samples = Arc::new(samples);
-        let samples2 = samples.clone();
-
-        let stream = device.build_output_stream(
-            &config,
-            move |data: &mut [f32], _: &_| {
-                for sample in data.iter_mut() {
-                    let i = pos2.fetch_add(1, Ordering::Relaxed);
-                    if i < samples2.len() {
-                        *sample = samples2[i];
-                    } else {
-                        *sample = 0.0;
-                        done2.store(true, Ordering::Relaxed);
-                    }
-                }
-            },
-            |err| log(&format!("Tone playback error: {}", err)),
-            None,
-        );
-
-        if let Ok(stream) = stream {
-            let _ = stream.play();
-            // Wait until all samples played, plus a small buffer
-            while !done.load(Ordering::Relaxed) {
-                std::thread::sleep(std::time::Duration::from_millis(5));
+                let sample_i16 = (s * i16::MAX as f32) as i16;
+                let _ = writer.write_sample(sample_i16);
             }
-            // Small extra delay to let the audio device flush
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            let _ = writer.finalize();
+
+            Command::new("paplay")
+                .arg("--device").arg(AUDIO_SINK)
+                .arg(&wav_path)
+                .spawn().ok();
         }
     });
 }
