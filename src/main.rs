@@ -601,6 +601,7 @@ fn start_viewer() {
                         let _ = std::fs::write(SESSION_FILE.as_str(), &sid);
                         // Restore live view from this session's history
                         restore_live_from_history();
+                        play_session_tone(get_active_session_index());
                         rouille::Response::json(&serde_json::json!({"ok": true, "name": name}))
                     } else {
                         rouille::Response::json(&serde_json::json!({"ok": false, "error": "Session not found"}))
@@ -614,6 +615,7 @@ fn start_viewer() {
             (POST) ["/session/new"] => {
                 let name = handle_new_session();
                 let id = get_active_session_id();
+                play_session_tone(get_active_session_index());
                 let live_content = format!("{}New session: **{}**\n\n---\n", session_header(), name);
                 let _ = std::fs::write(LIVE_LOG.as_str(), live_content);
                 rouille::Response::json(&serde_json::json!({"ok": true, "name": name, "id": id}))
@@ -1317,6 +1319,106 @@ fn speak(text: &str) {
     Command::new("/home/jb/bin/speak").arg(text).spawn().ok();
 }
 
+/// Returns the 0-based index of the active session in the sessions list.
+fn get_active_session_index() -> usize {
+    let active_id = get_active_session_id();
+    let sessions = load_sessions();
+    sessions.iter().position(|s| s.id == active_id).unwrap_or(0)
+}
+
+/// C major scale frequencies: C4 D4 E4 F4 G4 A4 B4 C5 ...
+fn session_tone_freq(session_index: usize) -> f32 {
+    // C major scale semitone offsets from C4: C=0, D=2, E=4, F=5, G=7, A=9, B=11
+    const SCALE: &[u32] = &[0, 2, 4, 5, 7, 9, 11];
+    let octave = session_index / SCALE.len();
+    let note = session_index % SCALE.len();
+    let semitones = (octave * 12 + SCALE[note] as usize) as f32;
+    261.63 * 2.0_f32.powf(semitones / 12.0)
+}
+
+/// Play a short sine-wave tone at a pitch corresponding to the session index.
+/// Runs in a spawned thread so it never blocks the caller.
+fn play_session_tone(session_index: usize) {
+    std::thread::spawn(move || {
+        let freq = session_tone_freq(session_index);
+        let sample_rate = 48000u32;
+        let duration_ms = 120;
+        let total_samples = (sample_rate as usize * duration_ms) / 1000;
+        let fade_samples = (sample_rate as usize * 10) / 1000; // 10ms fade in/out
+
+        // Pre-generate all samples
+        let samples: Vec<f32> = (0..total_samples)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                let mut s = (2.0 * std::f32::consts::PI * freq * t).sin() * 0.3;
+                // Fade in
+                if i < fade_samples {
+                    s *= i as f32 / fade_samples as f32;
+                }
+                // Fade out
+                if i >= total_samples - fade_samples {
+                    s *= (total_samples - 1 - i) as f32 / fade_samples as f32;
+                }
+                s
+            })
+            .collect();
+
+        let host = cpal::default_host();
+
+        // Find the output device matching AUDIO_SINK
+        let device = host.output_devices().ok()
+            .and_then(|mut devs| devs.find(|d| {
+                d.name().map(|n| n == AUDIO_SINK).unwrap_or(false)
+            }))
+            .or_else(|| host.default_output_device());
+
+        let device = match device {
+            Some(d) => d,
+            None => { log("⚠️ No output device for session tone"); return; }
+        };
+
+        let config = StreamConfig {
+            channels: 1,
+            sample_rate: SampleRate(sample_rate),
+            buffer_size: cpal::BufferSize::Default,
+        };
+
+        let pos = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let done = Arc::new(AtomicBool::new(false));
+        let pos2 = pos.clone();
+        let done2 = done.clone();
+        let samples = Arc::new(samples);
+        let samples2 = samples.clone();
+
+        let stream = device.build_output_stream(
+            &config,
+            move |data: &mut [f32], _: &_| {
+                for sample in data.iter_mut() {
+                    let i = pos2.fetch_add(1, Ordering::Relaxed);
+                    if i < samples2.len() {
+                        *sample = samples2[i];
+                    } else {
+                        *sample = 0.0;
+                        done2.store(true, Ordering::Relaxed);
+                    }
+                }
+            },
+            |err| log(&format!("Tone playback error: {}", err)),
+            None,
+        );
+
+        if let Ok(stream) = stream {
+            let _ = stream.play();
+            // Wait until all samples played, plus a small buffer
+            while !done.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            // Small extra delay to let the audio device flush
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    });
+}
+
 fn get_or_create_session() -> String {
     if let Ok(s) = std::fs::read_to_string(SESSION_FILE.as_str()) {
         let s = s.trim().to_string();
@@ -1341,6 +1443,7 @@ fn main() {
     let session = get_or_create_session();
     log(&format!("Using session: {}", session));
     restore_live_from_history();
+    play_session_tone(get_active_session_index());
 
     if let Err(e) = run(config) {
         log(&format!("Fatal error: {}", e));
@@ -1608,12 +1711,14 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                         let msg = format!("New session started: {}", name);
                         log(&format!("✅ {}", msg));
                         update_live("New session", &msg);
+                        play_session_tone(get_active_session_index());
                     }
                     SessionCommand::SwitchSession(query) => {
                         match handle_switch_session(&query) {
                             Ok(name) => {
                                 log(&format!("✅ Switched to {}", name));
                                 restore_live_from_history();
+                                play_session_tone(get_active_session_index());
                             }
                             Err(e) => {
                                 log(&format!("❌ {}", e));
