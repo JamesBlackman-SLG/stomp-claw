@@ -10,8 +10,10 @@ pkill -f "stomp-claw-viewer" 2>/dev/null || true
 sleep 1
 
 # Start stomp_claw from this directory (so it finds the beep WAVs)
+# Redirect output and disown so parent shells don't hang waiting on the pipe
 echo "Starting stomp_claw..."
-./target/release/stomp_claw &
+nohup ./target/release/stomp_claw >> ~/.stomp-claw/stomp-claw.log 2>&1 &
+disown
 
 sleep 2
 echo "stomp_claw started. Log at ~/.stomp-claw/stomp-claw.log"
