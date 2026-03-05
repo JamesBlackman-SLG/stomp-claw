@@ -10,6 +10,7 @@ use std::io::Read;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use futures::StreamExt;
@@ -204,6 +205,18 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         }
         .session-btn.new-btn:hover {
             background: #1f6feb22;
+        }
+        .session-btn.busy {
+            border-color: #d29922;
+            animation: busy-pulse 1.5s ease-in-out infinite;
+        }
+        .session-btn.busy.active {
+            border-color: #d29922;
+            background: #1f6feb;
+        }
+        @keyframes busy-pulse {
+            0%, 100% { border-color: #d29922; }
+            50% { border-color: #d2992266; }
         }
         .help-page h2 {
             color: #58a6ff;
@@ -422,8 +435,8 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             sessionBar.innerHTML = '';
             for (const s of sessions) {
                 const btn = document.createElement('button');
-                btn.className = 'session-btn' + (s.active ? ' active' : '');
-                btn.textContent = s.name;
+                btn.className = 'session-btn' + (s.active ? ' active' : '') + (s.busy ? ' busy' : '');
+                btn.textContent = s.name + (s.busy ? ' ⏳' : '');
                 btn.onclick = () => {
                     if (!s.active) {
                         fetch('/session/switch?id=' + encodeURIComponent(s.id), {method:'POST'})
@@ -509,7 +522,7 @@ fn escape_sse(s: &str) -> String {
         .replace('\n', "\\n")
 }
 
-fn start_viewer() {
+fn start_viewer(busy_sessions: Arc<Mutex<HashSet<String>>>) {
     log("🌐 Starting viewer on http://localhost:8765");
 
     let tx = std::sync::mpsc::channel::<PathBuf>().0;
@@ -581,11 +594,13 @@ fn start_viewer() {
             (GET) ["/sessions"] => {
                 let sessions = load_sessions();
                 let active_id = get_active_session_id();
+                let busy = busy_sessions.lock().unwrap();
                 let items: Vec<serde_json::Value> = sessions.iter().map(|s| {
                     serde_json::json!({
                         "id": s.id,
                         "name": s.name,
                         "active": s.id == active_id,
+                        "busy": busy.contains(&s.id),
                     })
                 }).collect();
                 rouille::Response::json(&items)
@@ -1458,14 +1473,11 @@ fn main() {
 }
 
 fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
-    // Start the web viewer in a background thread
-    std::thread::spawn(|| start_viewer());
-
     let recording = Arc::new(AtomicBool::new(false));
     let pedal_down = Arc::new(AtomicBool::new(false));
     let recording_start = Arc::new(Mutex::new(Option::<std::time::Instant>::None));
     let audio_data: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
-    
+
     // Config shared between threads
     let config = Arc::new(Mutex::new(config));
     // Flag to stop thinking animation thread when response arrives (or new recording starts)
@@ -1473,7 +1485,11 @@ fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     // Flag for session reset confirmation flow
     let awaiting_session_reset = Arc::new(AtomicBool::new(false));
     let abort_recording = Arc::new(AtomicBool::new(false));
-    let processing = Arc::new(AtomicBool::new(false));
+    let busy_sessions: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+
+    // Start the web viewer in a background thread
+    let busy_for_viewer = busy_sessions.clone();
+    std::thread::spawn(move || start_viewer(busy_for_viewer));
 
     let host = cpal::default_host();
     let device = host.default_input_device().ok_or("No input device")?;
@@ -1516,10 +1532,10 @@ fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let thinking2 = thinking.clone();
     let awaiting_session_reset2 = awaiting_session_reset.clone();
 
+    let busy_sessions2 = busy_sessions.clone();
     std::thread::spawn(move || {
         let abort_recording2 = abort_recording.clone();
-        let processing2 = processing.clone();
-        if let Err(e) = midi_listener(recording2, pedal_down2, audio2, config2, recording_start2, thinking2, awaiting_session_reset2, abort_recording2, processing2) {
+        if let Err(e) = midi_listener(recording2, pedal_down2, audio2, config2, recording_start2, thinking2, awaiting_session_reset2, abort_recording2, busy_sessions2) {
             log(&format!("MIDI error: {}", e));
         }
     });
@@ -1536,7 +1552,7 @@ fn midi_listener(
     thinking: Arc<AtomicBool>,
     awaiting_session_reset: Arc<AtomicBool>,
     abort_recording: Arc<AtomicBool>,
-    processing: Arc<AtomicBool>,
+    busy_sessions: Arc<Mutex<HashSet<String>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut midi_in = MidiInput::new("stomp_claw")?;
     midi_in.ignore(Ignore::None);
@@ -1553,11 +1569,15 @@ fn midi_listener(
         move |_, msg, _| {
             if msg.len() >= 3 && (msg[0] & 0xF0) == 0xB0 && msg[1] == PEDAL_CC {
                 if msg[2] == 127 && !pedal_down.load(Ordering::Relaxed) {
-                    // Check if already processing
-                    if processing.load(Ordering::Relaxed) {
-                        log("⏳ Still processing, playing busy beep");
-                        beep_busy();
-                        return;
+                    // Check if active session is busy
+                    {
+                        let active_id = get_active_session_id();
+                        let busy = busy_sessions.lock().unwrap();
+                        if busy.contains(&active_id) {
+                            log("⏳ Active session still processing, playing busy beep");
+                            beep_busy();
+                            return;
+                        }
                     }
                     beep_down();
                     log("👟 PEDAL DOWN");
@@ -1619,16 +1639,19 @@ fn midi_listener(
                         let config = config.clone();
                         let thinking = thinking.clone();
                         let awaiting_session_reset = awaiting_session_reset.clone();
-                        let processing_clone = processing.clone();
-                        
-                        // Mark as processing
-                        processing_clone.store(true, Ordering::Relaxed);
-                        
+                        let busy = busy_sessions.clone();
+
+                        // Capture which session this request is for
+                        let session_id = get_active_session_id();
+
+                        // Mark this session as busy
+                        busy.lock().unwrap().insert(session_id.clone());
+
                         std::thread::spawn(move || {
                             let result = process(samples, config, thinking.clone(), awaiting_session_reset);
-                            // Mark as done processing
-                            processing_clone.store(false, Ordering::Relaxed);
-                            
+                            // Mark session as done processing
+                            busy.lock().unwrap().remove(&session_id);
+
                             if let Err(e) = result {
                                 thinking.store(false, Ordering::Relaxed);
                                 log(&format!("Processing error: {}", e));
