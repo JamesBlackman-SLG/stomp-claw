@@ -24,7 +24,7 @@ fn base_dir() -> PathBuf {
 
 static LOG_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("stomp-claw.log").to_string_lossy().to_string());
 static CONVERSATION_LOG_DIR: LazyLock<String> = LazyLock::new(|| base_dir().join("conversations").to_string_lossy().to_string());
-static LIVE_LOG: LazyLock<String> = LazyLock::new(|| base_dir().join("live.md").to_string_lossy().to_string());
+static LIVE_DIR: LazyLock<String> = LazyLock::new(|| base_dir().join("live").to_string_lossy().to_string());
 static SESSION_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("session.txt").to_string_lossy().to_string());
 static CONFIG_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("config.toml").to_string_lossy().to_string());
 static VIEW_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("view.txt").to_string_lossy().to_string());
@@ -489,14 +489,14 @@ struct ViewerFileReader {
 
 impl ViewerFileReader {
     fn new() -> Self {
-        let initial = fs::read_to_string(LIVE_LOG.as_str()).unwrap_or_else(|_| "Waiting for recording...".to_string());
+        let initial = fs::read_to_string(&live_log_path()).unwrap_or_else(|_| "Waiting for recording...".to_string());
         Self { last_content: initial, first_read: true }
     }
 }
 
 impl std::io::Read for ViewerFileReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let content = fs::read_to_string(LIVE_LOG.as_str())
+        let content = fs::read_to_string(&live_log_path())
             .unwrap_or_else(|_| "Waiting for recording...".to_string());
 
         if self.first_read || content != self.last_content {
@@ -535,16 +535,12 @@ fn start_viewer(busy_sessions: Arc<Mutex<HashSet<String>>>) {
             NotifyConfig::default().with_poll_interval(std::time::Duration::from_secs(1)),
         ).unwrap();
 
-        let path = PathBuf::from(LIVE_LOG.as_str());
-        if let Some(parent) = path.parent() {
-            let _ = watcher.watch(parent, RecursiveMode::NonRecursive);
-        }
+        let live_dir = PathBuf::from(LIVE_DIR.as_str());
+        let _ = watcher.watch(&live_dir, RecursiveMode::NonRecursive);
 
         loop {
-            if let Ok(Ok(event)) = watcher_rx.recv_timeout(std::time::Duration::from_millis(500)) {
-                if event.paths.iter().any(|p| p.to_string_lossy() == *LIVE_LOG) {
-                    let _ = tx.send(PathBuf::from(LIVE_LOG.as_str()));
-                }
+            if let Ok(Ok(_event)) = watcher_rx.recv_timeout(std::time::Duration::from_millis(500)) {
+                let _ = tx.send(live_dir.clone());
             }
         }
     });
@@ -632,7 +628,7 @@ fn start_viewer(busy_sessions: Arc<Mutex<HashSet<String>>>) {
                 let id = get_active_session_id();
                 play_session_tone(get_active_session_index());
                 let live_content = format!("{}New session: **{}**\n\n---\n", session_header(), name);
-                let _ = std::fs::write(LIVE_LOG.as_str(), live_content);
+                let _ = std::fs::write(&live_log_path(), live_content);
                 rouille::Response::json(&serde_json::json!({"ok": true, "name": name, "id": id}))
             },
             (POST) ["/session/rename"] => {
@@ -942,6 +938,8 @@ fn handle_delete_session_confirmed() -> String {
     }
 
     save_sessions(&sessions);
+    // Clean up live file for deleted session
+    let _ = std::fs::remove_file(&live_log_path_for(&active_id));
     log(&format!("🗑️ Deleted session: {}", deleted_name));
     deleted_name
 }
@@ -1039,7 +1037,7 @@ fn update_live_with_partial(text: &str) {
 ",
         session_header(), text
     );
-    let _ = std::fs::write(LIVE_LOG.as_str(), content);
+    let _ = std::fs::write(&live_log_path(), content);
 }
 
 fn update_live_recording(seconds: f64) {
@@ -1052,7 +1050,7 @@ Release pedal to transcribe... (say \"ignore this\" to cancel)
 ",
         session_header(), dots, seconds
     );
-    let _ = std::fs::write(LIVE_LOG.as_str(), content);
+    let _ = std::fs::write(&live_log_path(), content);
 }
 
 fn update_live_cancelled() {
@@ -1060,7 +1058,7 @@ fn update_live_cancelled() {
 
 ---
 ", session_header());
-    let _ = std::fs::write(LIVE_LOG.as_str(), content);
+    let _ = std::fs::write(&live_log_path(), content);
 }
 
 fn update_live_thinking(user: &str) {
@@ -1074,7 +1072,7 @@ fn update_live_thinking(user: &str) {
 ",
         session_header(), user, dots
     );
-    let _ = std::fs::write(LIVE_LOG.as_str(), content);
+    let _ = std::fs::write(&live_log_path(), content);
 }
 
 fn restore_live_from_history() {
@@ -1085,13 +1083,13 @@ fn restore_live_from_history() {
         // Get the last non-empty entry
         if let Some(last) = entries.iter().rev().find(|e| !e.trim().is_empty()) {
             let live_content = format!("{}{}\n---\n", session_header(), last.trim());
-            let _ = std::fs::write(LIVE_LOG.as_str(), live_content);
+            let _ = std::fs::write(&live_log_path(), live_content);
             return;
         }
     }
     // No history — show a clean slate
     let live_content = format!("{}Hold the pedal and speak...\n", session_header());
-    let _ = std::fs::write(LIVE_LOG.as_str(), live_content);
+    let _ = std::fs::write(&live_log_path(), live_content);
 }
 
 fn update_live(user: &str, assistant: &str) {
@@ -1106,7 +1104,16 @@ fn update_live(user: &str, assistant: &str) {
 ",
         timestamp, user, assistant
     );
-    let _ = std::fs::write(LIVE_LOG.as_str(), content);
+    let _ = std::fs::write(&live_log_path(), content);
+}
+
+fn live_log_path() -> String {
+    let session = get_active_session_id();
+    format!("{}/{}.md", *LIVE_DIR, session)
+}
+
+fn live_log_path_for(session_id: &str) -> String {
+    format!("{}/{}.md", *LIVE_DIR, session_id)
 }
 
 fn conversation_log_path() -> String {
@@ -1281,7 +1288,7 @@ fn update_live_streaming(user: &str, partial_response: &str) {
 ",
         user, partial_response
     );
-    let _ = std::fs::write(LIVE_LOG.as_str(), content);
+    let _ = std::fs::write(&live_log_path(), content);
 }
 
 fn get_beep_path(name: &str) -> String {
@@ -1454,13 +1461,15 @@ fn get_or_create_session() -> String {
 fn main() {
     let _ = std::fs::create_dir_all(base_dir());
     let _ = std::fs::create_dir_all(base_dir().join("conversations"));
+    let _ = std::fs::create_dir_all(LIVE_DIR.as_str());
     let _ = File::create(LOG_FILE.as_str());
-    let _ = std::fs::write(LIVE_LOG.as_str(), "Hold the pedal and speak...\n");
+    // Clean up old single live.md if it exists
+    let _ = std::fs::remove_file(base_dir().join("live.md"));
     log("🎹 Stomp Claw starting...");
-    
+
     let config = load_config();
     log(&format!("Voice enabled: {}", config.voice_enabled));
-    
+
     migrate_sessions();
     let session = get_or_create_session();
     log(&format!("Using session: {}", session));
@@ -1631,15 +1640,12 @@ fn midi_listener(
                         let awaiting_session_reset = awaiting_session_reset.clone();
                         let busy = busy_sessions.clone();
 
-                        // Capture which session this request is for
                         let session_id = get_active_session_id();
 
-                        // Mark this session as busy
-                        busy.lock().unwrap().insert(session_id.clone());
-
                         std::thread::spawn(move || {
-                            let result = process(samples, config, thinking.clone(), awaiting_session_reset, busy.clone());
-                            // Mark session as done processing
+                            let result = process(samples, config, thinking.clone(), awaiting_session_reset, busy.clone(), session_id.clone());
+
+                            // Always clear busy flag, even on error
                             busy.lock().unwrap().remove(&session_id);
 
                             if let Err(e) = result {
@@ -1659,7 +1665,7 @@ fn midi_listener(
     loop { std::thread::sleep(std::time::Duration::from_secs(1)); }
 }
 
-fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBool>, awaiting_session_reset: Arc<AtomicBool>, busy_sessions: Arc<Mutex<HashSet<String>>>) -> Result<(), Box<dyn std::error::Error>> {
+fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBool>, awaiting_session_reset: Arc<AtomicBool>, busy_sessions: Arc<Mutex<HashSet<String>>>, own_session_id: String) -> Result<(), Box<dyn std::error::Error>> {
     if samples.is_empty() { log("Empty recording"); return Ok(()); }
     log(&format!("Processing {} samples @ {}Hz", samples.len(), TARGET_SAMPLE_RATE));
 
@@ -1824,9 +1830,8 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
 
             // Check if active session is busy before sending a normal message
             {
-                let active_id = get_active_session_id();
                 let busy = busy_sessions.lock().unwrap();
-                if busy.contains(&active_id) {
+                if busy.contains(&own_session_id) {
                     log("⏳ Active session still processing, rejecting message");
                     thinking.store(false, Ordering::Relaxed);
                     beep_busy();
@@ -1834,6 +1839,9 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                     return Ok(());
                 }
             }
+
+            // Mark this session as busy for the duration of the LLM call
+            busy_sessions.lock().unwrap().insert(own_session_id.clone());
 
             // Normal message - send to OpenClaw with Sonnet
             let session = get_or_create_session();
@@ -1937,6 +1945,8 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                     }
                 }
             }
+            // Unmark session as busy
+            busy_sessions.lock().unwrap().remove(&own_session_id);
         } else {
             thinking.store(false, Ordering::Relaxed);
             log("Empty transcript");
