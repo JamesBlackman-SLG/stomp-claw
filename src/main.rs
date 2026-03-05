@@ -1569,16 +1569,6 @@ fn midi_listener(
         move |_, msg, _| {
             if msg.len() >= 3 && (msg[0] & 0xF0) == 0xB0 && msg[1] == PEDAL_CC {
                 if msg[2] == 127 && !pedal_down.load(Ordering::Relaxed) {
-                    // Check if active session is busy
-                    {
-                        let active_id = get_active_session_id();
-                        let busy = busy_sessions.lock().unwrap();
-                        if busy.contains(&active_id) {
-                            log("⏳ Active session still processing, playing busy beep");
-                            beep_busy();
-                            return;
-                        }
-                    }
                     beep_down();
                     log("👟 PEDAL DOWN");
                     // Kill any existing thinking animation thread
@@ -1648,7 +1638,7 @@ fn midi_listener(
                         busy.lock().unwrap().insert(session_id.clone());
 
                         std::thread::spawn(move || {
-                            let result = process(samples, config, thinking.clone(), awaiting_session_reset);
+                            let result = process(samples, config, thinking.clone(), awaiting_session_reset, busy.clone());
                             // Mark session as done processing
                             busy.lock().unwrap().remove(&session_id);
 
@@ -1669,7 +1659,7 @@ fn midi_listener(
     loop { std::thread::sleep(std::time::Duration::from_secs(1)); }
 }
 
-fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBool>, awaiting_session_reset: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error>> {
+fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBool>, awaiting_session_reset: Arc<AtomicBool>, busy_sessions: Arc<Mutex<HashSet<String>>>) -> Result<(), Box<dyn std::error::Error>> {
     if samples.is_empty() { log("Empty recording"); return Ok(()); }
     log(&format!("Processing {} samples @ {}Hz", samples.len(), TARGET_SAMPLE_RATE));
 
@@ -1830,6 +1820,19 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                     update_live(&transcript, &msg);
                 }
                 return Ok::<_, Box<dyn std::error::Error>>(());
+            }
+
+            // Check if active session is busy before sending a normal message
+            {
+                let active_id = get_active_session_id();
+                let busy = busy_sessions.lock().unwrap();
+                if busy.contains(&active_id) {
+                    log("⏳ Active session still processing, rejecting message");
+                    thinking.store(false, Ordering::Relaxed);
+                    beep_busy();
+                    update_live(&transcript, "Session is busy — switch to another session first.");
+                    return Ok(());
+                }
             }
 
             // Normal message - send to OpenClaw with Sonnet
