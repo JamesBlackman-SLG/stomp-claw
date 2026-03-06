@@ -1056,6 +1056,10 @@ fn send_partial_transcription(samples: &[f32], client: &Client) -> Option<String
 }
 
 fn update_live_with_partial(text: &str) {
+    update_live_with_partial_for(text, &live_log_path());
+}
+
+fn update_live_with_partial_for(text: &str, path: &str) {
     let content = format!(
         "{}## 🎙️ Recording... (transcribing)
 
@@ -1065,10 +1069,14 @@ fn update_live_with_partial(text: &str) {
 ",
         session_header(), text
     );
-    let _ = std::fs::write(&live_log_path(), content);
+    let _ = std::fs::write(path, content);
 }
 
 fn update_live_recording(seconds: f64) {
+    update_live_recording_for(seconds, &live_log_path());
+}
+
+fn update_live_recording_for(seconds: f64, path: &str) {
     let dots = ".".repeat((seconds as usize / 2) % 4);
     let content = format!(
         "{}## 🎙️ Recording{} ({}s)
@@ -1078,15 +1086,19 @@ Release pedal to transcribe... (say \"ignore this\" to cancel)
 ",
         session_header(), dots, seconds
     );
-    let _ = std::fs::write(&live_log_path(), content);
+    let _ = std::fs::write(path, content);
 }
 
 fn update_live_cancelled() {
+    update_live_cancelled_for(&live_log_path());
+}
+
+fn update_live_cancelled_for(path: &str) {
     let content = format!("{}## ❌ Transcription cancelled by user
 
 ---
 ", session_header());
-    let _ = std::fs::write(&live_log_path(), content);
+    let _ = std::fs::write(path, content);
 }
 
 fn update_live_thinking(user: &str) {
@@ -1154,14 +1166,21 @@ fn live_log_path_for(session_id: &str) -> String {
 
 fn conversation_log_path() -> String {
     let session = std::fs::read_to_string(SESSION_FILE.as_str()).unwrap_or_else(|_| "unknown".to_string()).trim().to_string();
+    conversation_log_path_for(&session)
+}
+
+fn conversation_log_path_for(session_id: &str) -> String {
     let _ = std::fs::create_dir_all(CONVERSATION_LOG_DIR.as_str());
-    format!("{}/{}.md", *CONVERSATION_LOG_DIR, session)
+    format!("{}/{}.md", *CONVERSATION_LOG_DIR, session_id)
 }
 
 fn log_conversation(user: &str, assistant: &str) {
+    log_conversation_for(user, assistant, &conversation_log_path());
+}
+
+fn log_conversation_for(user: &str, assistant: &str, path: &str) {
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-    let path = conversation_log_path();
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(f, "## {} - You said:\n{}\n\n### Alan replied:\n{}\n---", timestamp, user, assistant);
     }
 }
@@ -1631,6 +1650,7 @@ fn midi_listener(
                     let rs = recording_start.clone();
                     let audio = audio_data.clone();
                     let abort = abort_recording.clone();
+                    let recording_live_path = live_log_path();
                     *rs.lock().unwrap() = Some(std::time::Instant::now());
                     std::thread::spawn(move || {
                         let client = Client::builder().timeout(std::time::Duration::from_secs(10)).build().unwrap();
@@ -1642,19 +1662,19 @@ fn midi_listener(
                                     let samples = audio.lock().unwrap();
                                     if let Some(text) = send_partial_transcription(&samples, &client) {
                                         log(&format!("📝 Partial: {}", text));
-                                        update_live_with_partial(&text);
+                                        update_live_with_partial_for(&text, &recording_live_path);
                                         // Check for cancel keywords (full phrases)
                                         let lower = text.to_lowercase();
                                         if lower.contains("ignore this") || lower.contains("never mind") || lower.contains("forget it") || lower.contains("scratch that") {
                                             log("🛑 CANCEL keyword detected");
                                             beep_abort();
-                                            update_live_cancelled();
+                                            update_live_cancelled_for(&recording_live_path);
                                             abort.store(true, Ordering::Relaxed);
                                             break;
                                         }
                                     }
                                 } else {
-                                    update_live_recording(elapsed);
+                                    update_live_recording_for(elapsed, &recording_live_path);
                                 }
                             }
                             std::thread::sleep(std::time::Duration::from_millis(300));
@@ -1978,7 +1998,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                     thinking.store(false, Ordering::Relaxed);
                     log(&format!("💬 Alan: {}", final_reply));
                     update_live_for(&transcript, &final_reply, &live_path);
-                    log_conversation(&transcript, &final_reply);
+                    log_conversation_for(&transcript, &final_reply, &conversation_log_path_for(&own_session_id));
 
                     // Speak if voice enabled, otherwise play notification chime
                     let cfg = config.lock().unwrap();
