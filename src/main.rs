@@ -214,9 +214,21 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             border-color: #d29922;
             background: #1f6feb;
         }
+        .session-btn.ready {
+            border-color: #3fb950;
+        }
         @keyframes busy-pulse {
             0%, 100% { border-color: #d29922; }
             50% { border-color: #d2992266; }
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .spinner {
+            display: inline-block;
+            animation: spin 1s linear infinite;
+            margin-left: 6px;
         }
         .help-page h2 {
             color: #58a6ff;
@@ -292,6 +304,8 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
 
         let currentView = 'live';
         let liveContent = 'Waiting for recording...';
+        let sessionWasBusy = {};
+        let sessionReady = {};
         let historyContent = '';
         let helpContent = '';
         let eventSource = null;
@@ -435,8 +449,22 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             sessionBar.innerHTML = '';
             for (const s of sessions) {
                 const btn = document.createElement('button');
-                btn.className = 'session-btn' + (s.active ? ' active' : '') + (s.busy ? ' busy' : '');
-                btn.textContent = s.name + (s.busy ? ' ⏳' : '');
+                let wasBusy = sessionWasBusy[s.id] || false;
+                let justFinished = wasBusy && !s.busy;
+                if (justFinished) {
+                    sessionReady[s.id] = Date.now();
+                }
+                sessionWasBusy[s.id] = s.busy;
+                let isReady = sessionReady[s.id] && (Date.now() - sessionReady[s.id] < 10000);
+                let cls = 'session-btn' + (s.active ? ' active' : '') + (s.busy ? ' busy' : '') + (isReady && !s.busy ? ' ready' : '');
+                btn.className = cls;
+                if (s.busy) {
+                    btn.innerHTML = s.name + ' <span class=\"spinner\">⟳</span>';
+                } else if (isReady) {
+                    btn.innerHTML = s.name + ' ✅';
+                } else {
+                    btn.textContent = s.name;
+                }
                 btn.onclick = () => {
                     if (!s.active) {
                         fetch('/session/switch?id=' + encodeURIComponent(s.id), {method:'POST'})
