@@ -1090,6 +1090,10 @@ fn update_live_cancelled() {
 }
 
 fn update_live_thinking(user: &str) {
+    update_live_thinking_for(user, &live_log_path());
+}
+
+fn update_live_thinking_for(user: &str, path: &str) {
     let dots = get_thinking_dots();
     let content = format!(
         "{}## You said:
@@ -1100,7 +1104,7 @@ fn update_live_thinking(user: &str) {
 ",
         session_header(), user, dots
     );
-    let _ = std::fs::write(&live_log_path(), content);
+    let _ = std::fs::write(path, content);
 }
 
 fn restore_live_from_history() {
@@ -1121,6 +1125,10 @@ fn restore_live_from_history() {
 }
 
 fn update_live(user: &str, assistant: &str) {
+    update_live_for(user, assistant, &live_log_path());
+}
+
+fn update_live_for(user: &str, assistant: &str, path: &str) {
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     let content = format!(
         "## {} - You said:
@@ -1132,7 +1140,7 @@ fn update_live(user: &str, assistant: &str) {
 ",
         timestamp, user, assistant
     );
-    let _ = std::fs::write(&live_log_path(), content);
+    let _ = std::fs::write(path, content);
 }
 
 fn live_log_path() -> String {
@@ -1305,6 +1313,10 @@ struct StreamDelta {
 }
 
 fn update_live_streaming(user: &str, partial_response: &str) {
+    update_live_streaming_for(user, partial_response, &live_log_path());
+}
+
+fn update_live_streaming_for(user: &str, partial_response: &str, path: &str) {
     let content = format!(
         "## You said:
 {}
@@ -1316,7 +1328,7 @@ fn update_live_streaming(user: &str, partial_response: &str) {
 ",
         user, partial_response
     );
-    let _ = std::fs::write(&live_log_path(), content);
+    let _ = std::fs::write(path, content);
 }
 
 fn get_beep_path(name: &str) -> String {
@@ -1695,6 +1707,9 @@ fn midi_listener(
 
 fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBool>, awaiting_session_reset: Arc<AtomicBool>, busy_sessions: Arc<Mutex<HashSet<String>>>, own_session_id: String) -> Result<(), Box<dyn std::error::Error>> {
     if samples.is_empty() { log("Empty recording"); return Ok(()); }
+    // Capture the live file path for THIS session so updates go to the right file
+    // even if the user switches sessions while we're processing
+    let live_path = live_log_path_for(&own_session_id);
     log(&format!("Processing {} samples @ {}Hz", samples.len(), TARGET_SAMPLE_RATE));
 
     let tmp = NamedTempFile::new()?;
@@ -1810,9 +1825,10 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
             thinking.store(true, Ordering::Relaxed);
             let user_for_thread = transcript.clone();
             let thinking_flag = thinking.clone();
+            let live_path_for_thinking = live_path.clone();
             std::thread::spawn(move || {
                 while thinking_flag.load(Ordering::Relaxed) {
-                    update_live_thinking(&user_for_thread);
+                    update_live_thinking_for(&user_for_thread, &live_path_for_thinking);
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
             });
@@ -1863,7 +1879,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                     log("⏳ Active session still processing, rejecting message");
                     thinking.store(false, Ordering::Relaxed);
                     beep_busy();
-                    update_live(&transcript, "Session is busy — switch to another session first.");
+                    update_live_for(&transcript, "Session is busy — switch to another session first.", &live_path);
                     return Ok(());
                 }
             }
@@ -1907,7 +1923,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                 let body = resp2.text().await.unwrap_or_default();
                 thinking.store(false, Ordering::Relaxed);
                 log(&format!("❌ OpenClaw HTTP {}: {}", status, body));
-                update_live(&transcript, &format!("❌ Error: HTTP {}", status));
+                update_live_for(&transcript, &format!("❌ Error: HTTP {}", status), &live_path);
             } else {
                 let mut full_reply = String::new();
                 let mut stream = resp2.bytes_stream();
@@ -1936,7 +1952,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                                     if let Some(content) = &choice.delta.content {
                                         full_reply.push_str(content);
                                         thinking.store(false, Ordering::Relaxed);
-                                        update_live_streaming(&transcript, &full_reply);
+                                        update_live_streaming_for(&transcript, &full_reply, &live_path);
                                     }
                                 }
                             }
@@ -1947,7 +1963,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                 if full_reply.is_empty() {
                     thinking.store(false, Ordering::Relaxed);
                     log("❌ OpenClaw: empty streaming response");
-                    update_live(&transcript, "❌ Error: empty response");
+                    update_live_for(&transcript, "❌ Error: empty response", &live_path);
                 } else {
                     // Truncate if voice is enabled
                     let final_reply = {
@@ -1961,7 +1977,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
 
                     thinking.store(false, Ordering::Relaxed);
                     log(&format!("💬 Alan: {}", final_reply));
-                    update_live(&transcript, &final_reply);
+                    update_live_for(&transcript, &final_reply, &live_path);
                     log_conversation(&transcript, &final_reply);
 
                     // Speak if voice enabled, otherwise play notification chime
