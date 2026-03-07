@@ -10,7 +10,7 @@ export function ChatView() {
   const sessionTurns = turns.get(activeSessionId) || []
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    bottomRef.current?.scrollIntoView({ behavior: 'instant' })
   }, [sessionTurns.length, streamingContent, thinking])
 
   return (

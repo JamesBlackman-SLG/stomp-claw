@@ -225,14 +225,17 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                         Event::LlmError { session_id, turn_id, error } =>
                             Some(WsOutgoing::LlmError { session_id, turn_id, error }),
                         Event::SessionSwitched { session_id } => {
-                            // Also send turns for new session
+                            // Send SessionSwitched first (clears client turns), then TurnList
+                            let _ = send_ws(&mut forward_tx, &WsOutgoing::SessionSwitched {
+                                session_id: session_id.clone(),
+                            }).await;
                             if let Ok(turns) = db::get_turns(&pool, &session_id).await {
                                 let _ = send_ws(&mut forward_tx, &WsOutgoing::TurnList {
                                     session_id: session_id.clone(),
                                     turns,
                                 }).await;
                             }
-                            Some(WsOutgoing::SessionSwitched { session_id })
+                            None // Already sent manually
                         }
                         Event::SessionCreated { session } => {
                             let s = db::Session {
