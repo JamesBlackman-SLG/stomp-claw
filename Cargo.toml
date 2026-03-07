@@ -1,25 +1,46 @@
 [package]
 name = "stomp_claw"
-version = "0.1.0"
+version = "2.0.0"
 edition = "2024"
 
 [dependencies]
+# MIDI
 midir = "0.9"
+
+# Audio capture
 cpal = "0.15"
 hound = "3.4"
-reqwest = { version = "0.11", features = ["json", "multipart", "stream"] }
+
+# HTTP client (for NeMo + OpenClaw)
+reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
 futures = "0.3"
+
+# Async runtime
 tokio = { version = "1", features = ["full"] }
+
+# Web server
+axum = { version = "0.8", features = ["ws"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+
+# Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# Utilities
 tempfile = "3.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 dirs = "5.0"
 uuid = { version = "1.0", features = ["v4"] }
-chrono = "0.4"
-toml = "0.8"
-rouille = "3.6"
-notify = "6.1"
+chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
+
+# Embed frontend assets
+rust-embed = "8"
+mime_guess = "2"
