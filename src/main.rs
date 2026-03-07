@@ -461,6 +461,9 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             eventSource.onopen = () => {
                 statusEl.textContent = 'Connected';
                 dot.className = 'connected';
+                // Refresh everything after reconnect (e.g. after server restart)
+                fetchSessions();
+                fetchHistory();
             };
 
             eventSource.onerror = () => {
@@ -474,7 +477,7 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         // Refresh history periodically when on history tab
         setInterval(() => {
             if (currentView === 'history') fetchHistory();
-        }, 5000);
+        }, 3000);
 
         // Poll for voice-triggered view switches
         let lastServerView = 'live';
@@ -574,6 +577,9 @@ impl ViewerFileReader {
 
 impl std::io::Read for ViewerFileReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // Throttle reads to avoid hammering the filesystem
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
         let content = fs::read_to_string(&live_log_path())
             .unwrap_or_else(|_| "Waiting for recording...".to_string());
 
@@ -582,11 +588,17 @@ impl std::io::Read for ViewerFileReader {
             self.last_content = content.clone();
             let msg = format!("data: {}\n\n", escape_sse(&content));
             let bytes = msg.as_bytes();
-            let to_copy = std::cmp::min(buf.len(), bytes.len());
+            if bytes.len() <= buf.len() {
+                buf[..bytes.len()].copy_from_slice(bytes);
+                return Ok(bytes.len());
+            }
+            // Message too large for buffer — send in chunks via pending buffer
+            let to_copy = buf.len();
             buf[..to_copy].copy_from_slice(&bytes[..to_copy]);
             return Ok(to_copy);
         }
 
+        // Send heartbeat every ~3 seconds (200ms * 15 iterations)
         let heartbeat = ": heartbeat\n\n";
         let bytes = heartbeat.as_bytes();
         let to_copy = std::cmp::min(buf.len(), bytes.len());
