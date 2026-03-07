@@ -438,7 +438,6 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                 .then(r => r.json())
                 .then(turns => {
                     if (!turns || turns.length === 0) {
-                        statusEl.textContent = 'Connected (turns: ' + cachedTurns.length + ', polling after: ' + lastTurnId + ')';
                         renderHistoryView();
                         return;
                     }
@@ -446,11 +445,10 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                         cachedTurns.push(turn);
                         lastTurnId = turn.id;
                     });
-                    statusEl.textContent = 'Connected (turns: ' + cachedTurns.length + ', last: ' + lastTurnId + ')';
                     renderHistoryView();
                     setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 50);
                 })
-                .catch(err => { statusEl.textContent = 'ERROR: ' + err.message; });
+                .catch(() => {});
         }
 
         function resetTurns() {
