@@ -374,11 +374,18 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             fetch('/history')
                 .then(r => r.text())
                 .then(text => {
-                    // Escape newlines to match SSE format so render() works the same
-                    historyContent = text.replace(/\\/g, '\\\\').replace(/\n/g, '\\n');
+                    let newContent = text.replace(/\\/g, '\\\\').replace(/\n/g, '\\n');
+                    if (newContent === historyContent) return; // No change, skip update
+                    let oldContent = historyContent;
+                    historyContent = newContent;
                     if (currentView === 'history') {
+                        // Check if user is scrolled near the bottom
+                        let atBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 50);
                         render(historyContent);
-                        window.scrollTo(0, document.body.scrollHeight);
+                        if (atBottom || !oldContent) {
+                            window.scrollTo(0, document.body.scrollHeight);
+                        }
+                        // Otherwise preserve scroll position (render already happened in place)
                     }
                 });
         }
