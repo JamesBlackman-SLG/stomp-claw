@@ -162,6 +162,18 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         .recording { color: #f0883e; font-weight: bold; }
         .thinking { color: #d29922; font-weight: bold; }
         .separator { color: #30363d; }
+        .live-separator {
+            color: #30363d;
+            text-align: center;
+            margin: 24px 0 16px 0;
+            font-size: 13px;
+            letter-spacing: 1px;
+        }
+        .live-separator hr {
+            border: none;
+            border-top: 1px solid #30363d;
+            margin: 0;
+        }
         .timestamp { color: #6e7681; }
         #status {
             position: fixed;
@@ -310,11 +322,7 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         let helpContent = '';
         let eventSource = null;
 
-        function render(text) {
-            if (!text || text.trim() === '') {
-                text = currentView === 'live' ? 'Waiting for recording...' : 'No history yet.';
-            }
-
+        function renderMarkdown(text) {
             const lines = text.split('\\n');
             let html = '';
             let section = 'none';
@@ -348,7 +356,33 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                     html += line + '<br>';
                 }
             }
+            return html;
+        }
 
+        function render(text) {
+            if (!text || text.trim() === '') {
+                text = currentView === 'live' ? 'Waiting for recording...' : 'No history yet.';
+            }
+            contentEl.innerHTML = renderMarkdown(text);
+        }
+
+        function hasLiveActivity(content) {
+            if (!content) return false;
+            let c = content.trim();
+            return c !== '' && c !== 'Waiting for recording...';
+        }
+
+        function renderHistoryView() {
+            let html = '';
+            if (historyContent && historyContent.trim()) {
+                html = renderMarkdown(historyContent);
+            } else {
+                html = '<span style="color:#6e7681">No history for this session yet.</span><br>';
+            }
+            if (hasLiveActivity(liveContent)) {
+                html += '<div class="live-separator"><hr></div>';
+                html += renderMarkdown(liveContent);
+            }
             contentEl.innerHTML = html;
         }
 
@@ -367,6 +401,7 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                 fetchHelp();
             } else {
                 fetchHistory();
+                setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 50);
             }
         }
 
@@ -379,13 +414,11 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                     let oldContent = historyContent;
                     historyContent = newContent;
                     if (currentView === 'history') {
-                        // Check if user is scrolled near the bottom
                         let atBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 50);
-                        render(historyContent);
+                        renderHistoryView();
                         if (atBottom || !oldContent) {
                             window.scrollTo(0, document.body.scrollHeight);
                         }
-                        // Otherwise preserve scroll position (render already happened in place)
                     }
                 });
         }
@@ -409,9 +442,19 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             eventSource = new EventSource('/events');
 
             eventSource.onmessage = (e) => {
+                let oldLive = liveContent;
                 liveContent = e.data;
                 if (currentView === 'live') {
                     render(liveContent);
+                } else if (currentView === 'history') {
+                    let hadActivity = hasLiveActivity(oldLive);
+                    let hasActivity = hasLiveActivity(liveContent);
+                    if (liveContent !== oldLive && (hadActivity || hasActivity)) {
+                        renderHistoryView();
+                        if (hasActivity) {
+                            window.scrollTo(0, document.body.scrollHeight);
+                        }
+                    }
                 }
             };
 
