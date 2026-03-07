@@ -42,4 +42,5 @@ export type WsCommand =
   | { type: 'create_session' }
   | { type: 'rename_session'; session_id: string; name: string }
   | { type: 'delete_session'; session_id: string }
+  | { type: 'cancel_recording' }
   | { type: 'toggle_voice' }

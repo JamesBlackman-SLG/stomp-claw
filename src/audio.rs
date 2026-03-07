@@ -140,6 +140,16 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver) {
                     });
                 }
             }
+            Ok(Event::CancelRecording) => {
+                if recording.load(Ordering::Relaxed) {
+                    tracing::info!("Recording cancelled via UI");
+                    samples.lock().unwrap().clear();
+                    let _ = tx.send(Event::PartialTranscript {
+                        session_id: current_session_id.clone(),
+                        text: String::new(),
+                    });
+                }
+            }
             Ok(Event::SessionSwitched { session_id }) => {
                 current_session_id = session_id;
             }

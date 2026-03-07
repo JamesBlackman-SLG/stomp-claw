@@ -57,6 +57,7 @@ pub enum Event {
     VoiceToggled { enabled: bool },
 
     // UI
+    CancelRecording,
     ShowHelp,
 
     // UI-originated

@@ -1,4 +1,5 @@
 import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { Turn } from '../lib/types'
 
 export function MessageBubble({ turn }: { turn: Turn }) {
@@ -10,12 +11,12 @@ export function MessageBubble({ turn }: { turn: Turn }) {
         isUser
           ? 'bg-user-bg border border-border text-text'
           : 'bg-surface border border-border text-text'
-      } ${turn.status === 'error' ? 'border-error/50' : ''}`}>
+      } ${turn.status === 'error' ? 'border-error/50' : ''} break-words overflow-hidden`}>
         {isUser ? (
           <p className="whitespace-pre-wrap">{turn.content}</p>
         ) : (
           <div className="prose prose-invert prose-sm max-w-none [&_p]:my-1 [&_pre]:bg-bg [&_pre]:p-3 [&_pre]:rounded [&_code]:text-accent">
-            <Markdown>{turn.content}</Markdown>
+            <Markdown remarkPlugins={[remarkGfm]}>{turn.content}</Markdown>
           </div>
         )}
         {turn.status === 'error' && (

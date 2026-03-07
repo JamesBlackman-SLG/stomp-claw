@@ -58,6 +58,7 @@ enum WsIncoming {
     CreateSession,
     RenameSession { session_id: String, name: String },
     DeleteSession { session_id: String },
+    CancelRecording,
     ToggleVoice,
 }
 
@@ -349,6 +350,9 @@ async fn handle_ws_message(msg: WsIncoming, tx: &EventSender, pool: &SqlitePool)
                 });
                 let _ = tx.send(Event::SessionSwitched { session_id: session.id });
             }
+        }
+        WsIncoming::CancelRecording => {
+            let _ = tx.send(Event::CancelRecording);
         }
         WsIncoming::ToggleVoice => {
             let current = db::get_config(pool, "voice_enabled").await
