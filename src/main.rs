@@ -290,6 +290,7 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         let helpContent = '';
         let showingHelp = false;
         let eventSource = null;
+        let firstConnect = true;
 
         // Incremental turn rendering state
         let cachedTurns = [];
@@ -437,18 +438,19 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                 .then(r => r.json())
                 .then(turns => {
                     if (!turns || turns.length === 0) {
+                        statusEl.textContent = 'Connected (turns: ' + cachedTurns.length + ', polling after: ' + lastTurnId + ')';
                         renderHistoryView();
                         return;
                     }
-                    console.log('Got ' + turns.length + ' new turns, lastTurnId was ' + lastTurnId);
                     turns.forEach(turn => {
                         cachedTurns.push(turn);
                         lastTurnId = turn.id;
                     });
+                    statusEl.textContent = 'Connected (turns: ' + cachedTurns.length + ', last: ' + lastTurnId + ')';
                     renderHistoryView();
                     setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 50);
                 })
-                .catch(err => { console.error('fetchNewTurns error:', err); });
+                .catch(err => { statusEl.textContent = 'ERROR: ' + err.message; });
         }
 
         function resetTurns() {
@@ -484,6 +486,12 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             };
 
             eventSource.onopen = () => {
+                if (!firstConnect) {
+                    // Server restarted — reload page to get fresh JS
+                    window.location.reload();
+                    return;
+                }
+                firstConnect = false;
                 statusEl.textContent = 'Connected';
                 dot.className = 'connected';
                 fetchSessions();
