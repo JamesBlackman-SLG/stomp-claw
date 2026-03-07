@@ -392,11 +392,15 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
 
             // Append any turns not yet in the DOM
             for (const turn of cachedTurns) {
-                if (!container.querySelector('[data-turn-id="' + turn.id + '"]')) {
-                    const div = document.createElement('div');
-                    div.setAttribute('data-turn-id', turn.id);
-                    div.innerHTML = renderTurnHtml(turn);
-                    container.appendChild(div);
+                try {
+                    if (!container.querySelector('[data-turn-id="' + turn.id + '"]')) {
+                        const div = document.createElement('div');
+                        div.setAttribute('data-turn-id', turn.id);
+                        div.innerHTML = renderTurnHtml(turn);
+                        container.appendChild(div);
+                    }
+                } catch(e) {
+                    console.error('Error rendering turn ' + turn.id + ':', e);
                 }
             }
 
@@ -449,15 +453,15 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                         renderHistoryView();
                         return;
                     }
+                    console.log('Got ' + turns.length + ' new turns, lastTurnId was ' + lastTurnId);
                     turns.forEach(turn => {
                         cachedTurns.push(turn);
                         lastTurnId = turn.id;
                     });
                     renderHistoryView();
-                    // Always scroll to bottom when new turns arrive
                     setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 50);
                 })
-                .catch(() => {});
+                .catch(err => { console.error('fetchNewTurns error:', err); });
         }
 
         function resetTurns() {
