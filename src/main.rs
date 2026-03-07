@@ -2195,8 +2195,10 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                 let mut full_reply = String::new();
                 let mut stream = resp2.bytes_stream();
                 let mut buffer = String::new();
+                let mut stream_done = false;
 
                 while let Some(chunk) = stream.next().await {
+                    if stream_done { break; }
                     let chunk = chunk?;
                     buffer.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -2211,6 +2213,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
 
                         if let Some(data) = line.strip_prefix("data: ") {
                             if data.trim() == "[DONE]" {
+                                stream_done = true;
                                 break;
                             }
 
