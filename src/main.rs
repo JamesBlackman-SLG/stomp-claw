@@ -2307,6 +2307,9 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                     update_live_for(&transcript, &final_reply, &live_path);
                     log_conversation_for(&transcript, &final_reply, &own_session_id);
 
+                    // Clear live file after saving turn so history view doesn't duplicate
+                    let _ = std::fs::write(&live_path, "Waiting for recording...\n");
+
                     // Speak if voice enabled, otherwise play notification chime
                     let cfg = config.lock().unwrap();
                     if cfg.voice_enabled {
