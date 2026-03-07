@@ -318,9 +318,16 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         let liveContent = 'Waiting for recording...';
         let sessionWasBusy = {};
         let sessionReady = {};
-        let historyContent = '';
         let helpContent = '';
         let eventSource = null;
+
+        // Incremental turn rendering state
+        let cachedTurns = [];
+        let lastTurnId = 0;
+
+        function escapeHtml(s) {
+            return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
 
         function renderMarkdown(text) {
             const lines = text.split('\\n');
@@ -328,7 +335,7 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             let section = 'none';
 
             for (let line of lines) {
-                line = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                line = escapeHtml(line);
 
                 if (line.match(/^##\s+.*Recording/)) {
                     html += '<span class="recording">' + line + '</span><br>';
@@ -359,6 +366,21 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             return html;
         }
 
+        function renderTurnHtml(turn) {
+            let html = '';
+            html += '<span class="you-said">## ' + escapeHtml(turn.timestamp) + ' - You said:</span><br>';
+            escapeHtml(turn.user).split('\\n').forEach(line => {
+                html += '<span class="user-text">' + line + '</span><br>';
+            });
+            html += '<br>';
+            html += '<span class="alan-replied">### Alan replied:</span><br>';
+            escapeHtml(turn.assistant).split('\\n').forEach(line => {
+                html += '<span class="alan-text">' + line + '</span><br>';
+            });
+            html += '<span class="separator">---</span><br>';
+            return html;
+        }
+
         function render(text) {
             if (!text || text.trim() === '') {
                 text = currentView === 'live' ? 'Waiting for recording...' : 'No history yet.';
@@ -373,17 +395,36 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         }
 
         function renderHistoryView() {
-            let html = '';
-            if (historyContent && historyContent.trim()) {
-                html = renderMarkdown(historyContent);
-            } else {
-                html = '<span style="color:#6e7681">No history for this session yet.</span><br>';
+            // Ensure turn container exists
+            let container = document.getElementById('turns-container');
+            let liveEl = document.getElementById('live-activity');
+            if (!container) {
+                contentEl.innerHTML = '<div id="turns-container"></div><div id="live-activity"></div>';
+                container = document.getElementById('turns-container');
+                liveEl = document.getElementById('live-activity');
             }
+
+            // Append only new turns
+            for (const turn of cachedTurns) {
+                if (!document.querySelector('[data-turn-id="' + turn.id + '"]')) {
+                    const div = document.createElement('div');
+                    div.setAttribute('data-turn-id', turn.id);
+                    div.innerHTML = renderTurnHtml(turn);
+                    container.appendChild(div);
+                }
+            }
+
+            // Empty history placeholder
+            if (cachedTurns.length === 0 && !container.children.length) {
+                container.innerHTML = '<span style="color:#6e7681">No history for this session yet.</span><br>';
+            }
+
+            // Always re-render live activity
             if (hasLiveActivity(liveContent)) {
-                html += '<div class="live-separator"><hr></div>';
-                html += renderMarkdown(liveContent);
+                liveEl.innerHTML = '<div class="live-separator"><hr></div>' + renderMarkdown(liveContent);
+            } else {
+                liveEl.innerHTML = '';
             }
-            contentEl.innerHTML = html;
         }
 
         function switchTab(view) {
@@ -400,27 +441,39 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             } else if (view === 'help') {
                 fetchHelp();
             } else {
-                fetchHistory();
+                fetchNewTurns();
                 setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 50);
             }
         }
 
-        function fetchHistory() {
-            fetch('/history')
-                .then(r => r.text())
-                .then(text => {
-                    let newContent = text.replace(/\\/g, '\\\\').replace(/\n/g, '\\n');
-                    if (newContent === historyContent) return; // No change, skip update
-                    let oldContent = historyContent;
-                    historyContent = newContent;
+        function fetchNewTurns() {
+            fetch('/turns?after=' + lastTurnId)
+                .then(r => r.json())
+                .then(turns => {
+                    if (turns.length === 0) {
+                        if (currentView === 'history') renderHistoryView();
+                        return;
+                    }
+                    let atBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 50);
+                    turns.forEach(turn => {
+                        cachedTurns.push(turn);
+                        lastTurnId = turn.id;
+                    });
                     if (currentView === 'history') {
-                        let atBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 50);
                         renderHistoryView();
-                        if (atBottom || !oldContent) {
+                        if (atBottom) {
                             window.scrollTo(0, document.body.scrollHeight);
                         }
                     }
-                });
+                })
+                .catch(() => {});
+        }
+
+        function resetTurns() {
+            cachedTurns = [];
+            lastTurnId = 0;
+            let container = document.getElementById('turns-container');
+            if (container) container.innerHTML = '';
         }
 
         function fetchHelp() {
@@ -463,7 +516,8 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                 dot.className = 'connected';
                 // Refresh everything after reconnect (e.g. after server restart)
                 fetchSessions();
-                fetchHistory();
+                resetTurns();
+                fetchNewTurns();
             };
 
             eventSource.onerror = () => {
@@ -476,7 +530,7 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
 
         // Refresh history periodically when on history tab
         setInterval(() => {
-            if (currentView === 'history') fetchHistory();
+            if (currentView === 'history') fetchNewTurns();
         }, 3000);
 
         // Poll for voice-triggered view switches
@@ -523,10 +577,8 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                         fetch('/session/switch?id=' + encodeURIComponent(s.id), {method:'POST'})
                             .then(() => {
                                 fetchSessions();
-                                fetchHistory();
-                                if (currentView === 'history') {
-                                    setTimeout(fetchHistory, 300);
-                                }
+                                resetTurns();
+                                fetchNewTurns();
                             });
                     }
                 };
@@ -537,7 +589,7 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             newBtn.textContent = '+ New';
             newBtn.onclick = () => {
                 fetch('/session/new', {method:'POST'})
-                    .then(() => { fetchSessions(); fetchHistory(); });
+                    .then(() => { fetchSessions(); resetTurns(); fetchNewTurns(); });
             };
             sessionBar.appendChild(newBtn);
         }
@@ -673,10 +725,34 @@ fn start_viewer(busy_sessions: Arc<Mutex<HashSet<String>>>) {
                 let session = fs::read_to_string(SESSION_FILE.as_str())
                     .unwrap_or_else(|_| "unknown".to_string())
                     .trim().to_string();
-                let path = format!("{}/{}.md", *CONVERSATION_LOG_DIR, session);
-                let content = fs::read_to_string(&path)
-                    .unwrap_or_else(|_| "No history for this session yet.".to_string());
+                let md = turns_to_markdown(&session);
+                let content = if md.is_empty() {
+                    "No history for this session yet.".to_string()
+                } else {
+                    md
+                };
                 rouille::Response::text(content)
+            },
+            (GET) ["/turns"] => {
+                let session = request.get_param("session").unwrap_or_else(|| {
+                    fs::read_to_string(SESSION_FILE.as_str())
+                        .unwrap_or_else(|_| "unknown".to_string())
+                        .trim().to_string()
+                });
+                let after: u32 = request.get_param("after")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                let turns = read_turns_after(&session, after);
+                rouille::Response::json(&turns)
+            },
+            (GET) ["/turns/count"] => {
+                let session = request.get_param("session").unwrap_or_else(|| {
+                    fs::read_to_string(SESSION_FILE.as_str())
+                        .unwrap_or_else(|_| "unknown".to_string())
+                        .trim().to_string()
+                });
+                let count = turn_count_for(&session);
+                rouille::Response::json(&serde_json::json!({"count": count}))
             },
             (GET) ["/sessions"] => {
                 let sessions = load_sessions();
@@ -753,6 +829,14 @@ fn start_viewer(busy_sessions: Arc<Mutex<HashSet<String>>>) {
     }).expect("Failed to create viewer server");
 
     server.run();
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Turn {
+    id: u32,
+    timestamp: String,
+    user: String,
+    assistant: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1029,8 +1113,13 @@ fn handle_delete_session_confirmed() -> String {
     }
 
     save_sessions(&sessions);
-    // Clean up live file for deleted session
+    // Clean up live file and turn directory for deleted session
     let _ = std::fs::remove_file(&live_log_path_for(&active_id));
+    let turn_dir = format!("{}/{}", *CONVERSATION_LOG_DIR, active_id);
+    let _ = std::fs::remove_dir_all(&turn_dir);
+    // Also remove legacy .md file if it exists
+    let md_path = format!("{}/{}.md", *CONVERSATION_LOG_DIR, active_id);
+    let _ = std::fs::remove_file(&md_path);
     log(&format!("🗑️ Deleted session: {}", deleted_name));
     deleted_name
 }
@@ -1183,16 +1272,15 @@ fn update_live_thinking_for(user: &str, path: &str) {
 }
 
 fn restore_live_from_history() {
-    let path = conversation_log_path();
-    if let Ok(content) = std::fs::read_to_string(&path) {
-        // Find the last conversation entry (split on "---")
-        let entries: Vec<&str> = content.split("\n---\n").collect();
-        // Get the last non-empty entry
-        if let Some(last) = entries.iter().rev().find(|e| !e.trim().is_empty()) {
-            let live_content = format!("{}{}\n---\n", session_header(), last.trim());
-            let _ = std::fs::write(&live_log_path(), live_content);
-            return;
-        }
+    let session_id = get_active_session_id();
+    let turns = read_turns_after(&session_id, 0);
+    if let Some(last) = turns.last() {
+        let live_content = format!(
+            "{}## {} - You said:\n{}\n\n### Alan replied:\n{}\n---\n",
+            session_header(), last.timestamp, last.user, last.assistant
+        );
+        let _ = std::fs::write(&live_log_path(), live_content);
+        return;
     }
     // No history — show a clean slate
     let live_content = format!("{}Hold the pedal and speak...\n", session_header());
@@ -1227,25 +1315,171 @@ fn live_log_path_for(session_id: &str) -> String {
     format!("{}/{}.md", *LIVE_DIR, session_id)
 }
 
-fn conversation_log_path() -> String {
-    let session = std::fs::read_to_string(SESSION_FILE.as_str()).unwrap_or_else(|_| "unknown".to_string()).trim().to_string();
-    conversation_log_path_for(&session)
+/// Get the directory for per-turn files for a session
+fn turn_dir_for(session_id: &str) -> String {
+    let dir = format!("{}/{}", *CONVERSATION_LOG_DIR, session_id);
+    let _ = std::fs::create_dir_all(&dir);
+    dir
 }
 
-fn conversation_log_path_for(session_id: &str) -> String {
-    let _ = std::fs::create_dir_all(CONVERSATION_LOG_DIR.as_str());
-    format!("{}/{}.md", *CONVERSATION_LOG_DIR, session_id)
+/// Count turn files in a session directory
+fn turn_count_for(session_id: &str) -> u32 {
+    let dir = turn_dir_for(session_id);
+    std::fs::read_dir(&dir)
+        .map(|entries| entries.filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("turn-") && e.file_name().to_string_lossy().ends_with(".json"))
+            .count() as u32)
+        .unwrap_or(0)
+}
+
+/// Read all turns for a session with id > after
+fn read_turns_after(session_id: &str, after: u32) -> Vec<Turn> {
+    let dir = turn_dir_for(session_id);
+    let mut turns = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        let mut files: Vec<_> = entries.filter_map(|e| e.ok())
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                name.starts_with("turn-") && name.ends_with(".json")
+            })
+            .collect();
+        files.sort_by_key(|e| e.file_name().to_string_lossy().to_string());
+        for entry in files {
+            if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                if let Ok(turn) = serde_json::from_str::<Turn>(&content) {
+                    if turn.id > after {
+                        turns.push(turn);
+                    }
+                }
+            }
+        }
+    }
+    turns
+}
+
+/// Read all turns for a session and produce the old markdown format
+fn turns_to_markdown(session_id: &str) -> String {
+    let turns = read_turns_after(session_id, 0);
+    if turns.is_empty() {
+        return String::new();
+    }
+    let mut md = String::new();
+    for turn in &turns {
+        md.push_str(&format!("## {} - You said:\n{}\n\n### Alan replied:\n{}\n---\n", turn.timestamp, turn.user, turn.assistant));
+    }
+    md
+}
+
+/// Write a new turn file and return its id
+fn write_turn(session_id: &str, user: &str, assistant: &str) -> u32 {
+    let next_id = turn_count_for(session_id) + 1;
+    let turn = Turn {
+        id: next_id,
+        timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        user: user.to_string(),
+        assistant: assistant.to_string(),
+    };
+    let dir = turn_dir_for(session_id);
+    let path = format!("{}/turn-{:04}.json", dir, next_id);
+    if let Ok(json) = serde_json::to_string_pretty(&turn) {
+        let _ = std::fs::write(&path, json);
+    }
+    next_id
+}
+
+/// Migrate a monolithic .md conversation file to per-turn files
+fn migrate_conversation(session_id: &str) {
+    let md_path = format!("{}/{}.md", *CONVERSATION_LOG_DIR, session_id);
+    if !std::path::Path::new(&md_path).exists() {
+        return;
+    }
+    let content = match std::fs::read_to_string(&md_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    if content.trim().is_empty() {
+        let _ = std::fs::remove_file(&md_path);
+        return;
+    }
+
+    let dir = turn_dir_for(session_id);
+    // Don't re-migrate if turns already exist
+    if turn_count_for(session_id) > 0 {
+        let _ = std::fs::remove_file(&md_path);
+        return;
+    }
+
+    let entries: Vec<&str> = content.split("\n---\n").collect();
+    let mut turn_id: u32 = 0;
+    for entry in &entries {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        // Parse: "## TIMESTAMP - You said:\nUSER\n\n### Alan replied:\nASSISTANT"
+        let mut timestamp = String::new();
+        let mut user_text = String::new();
+        let mut assistant_text = String::new();
+
+        let mut section = "none";
+        for line in entry.lines() {
+            if line.starts_with("## ") && line.contains("You said") {
+                // Extract timestamp: "## 2026-03-06 11:59:41 - You said:"
+                if let Some(ts) = line.strip_prefix("## ") {
+                    if let Some(pos) = ts.find(" - You said") {
+                        timestamp = ts[..pos].to_string();
+                    }
+                }
+                section = "user";
+            } else if line.starts_with("### Alan replied") || line.starts_with("### Alan:") {
+                section = "assistant";
+            } else {
+                match section {
+                    "user" => {
+                        if !user_text.is_empty() { user_text.push('\n'); }
+                        user_text.push_str(line);
+                    }
+                    "assistant" => {
+                        if !assistant_text.is_empty() { assistant_text.push('\n'); }
+                        assistant_text.push_str(line);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let user_text = user_text.trim().to_string();
+        let assistant_text = assistant_text.trim().to_string();
+        if user_text.is_empty() && assistant_text.is_empty() {
+            continue;
+        }
+
+        turn_id += 1;
+        let turn = Turn {
+            id: turn_id,
+            timestamp: if timestamp.is_empty() { "unknown".to_string() } else { timestamp },
+            user: user_text,
+            assistant: assistant_text,
+        };
+        let path = format!("{}/turn-{:04}.json", dir, turn_id);
+        if let Ok(json) = serde_json::to_string_pretty(&turn) {
+            let _ = std::fs::write(&path, json);
+        }
+    }
+
+    if turn_id > 0 {
+        log(&format!("📋 Migrated {} turns for session {}", turn_id, session_id));
+    }
+    let _ = std::fs::remove_file(&md_path);
 }
 
 fn log_conversation(user: &str, assistant: &str) {
-    log_conversation_for(user, assistant, &conversation_log_path());
+    let session_id = get_active_session_id();
+    log_conversation_for(user, assistant, &session_id);
 }
 
-fn log_conversation_for(user: &str, assistant: &str, path: &str) {
-    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, "## {} - You said:\n{}\n\n### Alan replied:\n{}\n---", timestamp, user, assistant);
-    }
+fn log_conversation_for(user: &str, assistant: &str, session_id: &str) {
+    write_turn(session_id, user, assistant);
 }
 
 fn truncate_to_sentences(text: &str, max_sentences: usize) -> String {
@@ -1595,6 +1829,23 @@ fn main() {
     migrate_sessions();
     let session = get_or_create_session();
     log(&format!("Using session: {}", session));
+
+    // Migrate all existing monolithic .md conversation files to per-turn format
+    let sessions = load_sessions();
+    for s in &sessions {
+        migrate_conversation(&s.id);
+    }
+    // Also migrate orphaned .md files not in sessions.json
+    if let Ok(entries) = std::fs::read_dir(CONVERSATION_LOG_DIR.as_str()) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".md") {
+                let session_id = name.trim_end_matches(".md");
+                migrate_conversation(session_id);
+            }
+        }
+    }
+
     restore_live_from_history();
     play_startup_tune(get_active_session_index());
 
@@ -2061,7 +2312,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                     thinking.store(false, Ordering::Relaxed);
                     log(&format!("💬 Alan: {}", final_reply));
                     update_live_for(&transcript, &final_reply, &live_path);
-                    log_conversation_for(&transcript, &final_reply, &conversation_log_path_for(&own_session_id));
+                    log_conversation_for(&transcript, &final_reply, &own_session_id);
 
                     // Speak if voice enabled, otherwise play notification chime
                     let cfg = config.lock().unwrap();
