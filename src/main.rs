@@ -2197,12 +2197,22 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                 let mut buffer = String::new();
                 let mut stream_done = false;
 
-                while let Some(chunk) = stream.next().await {
+                loop {
                     if stream_done {
                         log("🏁 Stream done, breaking outer loop");
                         break;
                     }
-                    let chunk = chunk?;
+                    let chunk = match tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        stream.next()
+                    ).await {
+                        Ok(Some(chunk)) => chunk?,
+                        Ok(None) => { log("🏁 Stream ended naturally"); break; }
+                        Err(_) => {
+                            log("🏁 Stream read timed out (5s), treating as done");
+                            break;
+                        }
+                    };
                     buffer.push_str(&String::from_utf8_lossy(&chunk));
 
                     // Process complete SSE lines from the buffer
