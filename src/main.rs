@@ -333,30 +333,41 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             return html;
         }
 
-        function renderTurnHtml(turn) {
+        function simpleMarkdown(text) {
+            let lines = text.split(String.fromCharCode(10));
             let html = '';
-            html += '<span class="you-said">## ' + escapeHtml(turn.timestamp) + ' - You said:</span><br>';
-            let userLines = turn.user.split(String.fromCharCode(10));
-            userLines.forEach(line => {
-                html += '<span class="user-text">' + escapeHtml(line) + '</span><br>';
-            });
-            html += '<br>';
-            html += '<span class="alan-replied">### Alan replied:</span><br>';
-            let asstLines = turn.assistant.split(String.fromCharCode(10));
-            asstLines.forEach(line => {
+            for (let line of lines) {
                 let escaped = escapeHtml(line);
                 if (escaped.trim() === '') {
                     html += '<br>';
                 } else if (escaped.startsWith('- ')) {
-                    html += '<span class="alan-text">&bull; ' + escaped.substring(2) + '</span><br>';
-                } else if (escaped.match(/^\\d+\\. /)) {
-                    html += '<span class="alan-text">' + escaped + '</span><br>';
-                } else if (escaped.startsWith('**') && escaped.endsWith('**')) {
-                    html += '<span class="alan-text"><strong>' + escaped.slice(2, -2) + '</strong></span><br>';
+                    html += '<span class="alan-text">&bull; ' + inlineMd(escaped.substring(2)) + '</span><br>';
                 } else {
-                    html += '<span class="alan-text">' + escaped.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>').replace(/\\*(.+?)\\*/g, '<em>$1</em>') + '</span><br>';
+                    html += '<span class="alan-text">' + inlineMd(escaped) + '</span><br>';
                 }
+            }
+            return html;
+        }
+
+        function inlineMd(text) {
+            // Bold: **text**
+            text = text.replace(/\x2a\x2a(.+?)\x2a\x2a/g, '<strong>$1</strong>');
+            // Italic: *text*
+            text = text.replace(/\x2a(.+?)\x2a/g, '<em>$1</em>');
+            // Code: `text`
+            text = text.replace(/`(.+?)`/g, '<code>$1</code>');
+            return text;
+        }
+
+        function renderTurnHtml(turn) {
+            let html = '';
+            html += '<span class="you-said">## ' + escapeHtml(turn.timestamp) + ' - You said:</span><br>';
+            turn.user.split(String.fromCharCode(10)).forEach(line => {
+                html += '<span class="user-text">' + escapeHtml(line) + '</span><br>';
             });
+            html += '<br>';
+            html += '<span class="alan-replied">### Alan replied:</span><br>';
+            html += simpleMarkdown(turn.assistant);
             html += '<span class="separator">---</span><br>';
             return html;
         }
