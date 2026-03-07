@@ -336,13 +336,26 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         function renderTurnHtml(turn) {
             let html = '';
             html += '<span class="you-said">## ' + escapeHtml(turn.timestamp) + ' - You said:</span><br>';
-            escapeHtml(turn.user).split('\\n').forEach(line => {
-                html += '<span class="user-text">' + line + '</span><br>';
+            let userLines = turn.user.split(String.fromCharCode(10));
+            userLines.forEach(line => {
+                html += '<span class="user-text">' + escapeHtml(line) + '</span><br>';
             });
             html += '<br>';
             html += '<span class="alan-replied">### Alan replied:</span><br>';
-            escapeHtml(turn.assistant).split('\\n').forEach(line => {
-                html += '<span class="alan-text">' + line + '</span><br>';
+            let asstLines = turn.assistant.split(String.fromCharCode(10));
+            asstLines.forEach(line => {
+                let escaped = escapeHtml(line);
+                if (escaped.trim() === '') {
+                    html += '<br>';
+                } else if (escaped.startsWith('- ')) {
+                    html += '<span class="alan-text">&bull; ' + escaped.substring(2) + '</span><br>';
+                } else if (escaped.match(/^\\d+\\. /)) {
+                    html += '<span class="alan-text">' + escaped + '</span><br>';
+                } else if (escaped.startsWith('**') && escaped.endsWith('**')) {
+                    html += '<span class="alan-text"><strong>' + escaped.slice(2, -2) + '</strong></span><br>';
+                } else {
+                    html += '<span class="alan-text">' + escaped.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>').replace(/\\*(.+?)\\*/g, '<em>$1</em>') + '</span><br>';
+                }
             });
             html += '<span class="separator">---</span><br>';
             return html;
