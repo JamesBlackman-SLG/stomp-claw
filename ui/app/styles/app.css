@@ -1,0 +1,55 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+    --color-bg: #0a0a0a;
+    --color-surface: #141414;
+    --color-surface-hover: #1e1e1e;
+    --color-border: #2a2a2a;
+    --color-text: #e0e0e0;
+    --color-text-dim: #888888;
+    --color-accent: #00ff88;
+    --color-accent-dim: #00cc6a;
+    --color-user-bg: #1a3a1a;
+    --color-error: #ff4444;
+    --color-recording: #ff3333;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+body {
+    font-family: var(--font-mono);
+    background-color: var(--color-bg);
+    color: var(--color-text);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 6px;
+}
+::-webkit-scrollbar-track {
+    background: var(--color-bg);
+}
+::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 3px;
+}
+
+/* Blinking cursor for streaming */
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+.streaming-cursor::after {
+    content: '\2588';
+    animation: blink 1s step-end infinite;
+    color: var(--color-accent);
+}
+
+/* Pulsing recording indicator */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+.recording-pulse {
+    animation: pulse 1.5s ease-in-out infinite;
+}
