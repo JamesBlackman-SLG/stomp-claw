@@ -35,7 +35,11 @@ const initialState: AppState = {
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'set_connected':
-      return { ...state, connected: action.connected }
+      if (action.connected) {
+        // On reconnect, clear all stale state — server will send fresh data
+        return { ...state, connected: true, turns: new Map(), streamingTurnId: null, streamingContent: '', thinking: false }
+      }
+      return { ...state, connected: false }
 
     case 'ws_message': {
       const msg = action.msg
@@ -45,7 +49,7 @@ function reducer(state: AppState, action: Action): AppState {
         case 'session_list':
           return { ...state, sessions: msg.sessions }
         case 'session_switched':
-          return { ...state, activeSessionId: msg.session_id, recording: false, partialTranscript: '', thinking: false, streamingTurnId: null }
+          return { ...state, activeSessionId: msg.session_id, turns: new Map(), recording: false, partialTranscript: '', thinking: false, streamingTurnId: null, streamingContent: '' }
         case 'session_created':
           return { ...state, sessions: [...state.sessions, msg.session] }
         case 'session_renamed':
@@ -54,7 +58,7 @@ function reducer(state: AppState, action: Action): AppState {
           return { ...state, sessions: state.sessions.filter(s => s.id !== msg.session_id) }
         case 'turn_list': {
           const newTurns = new Map(state.turns)
-          newTurns.set(msg.session_id, msg.turns)
+          newTurns.set(msg.session_id, [...msg.turns])
           return { ...state, turns: newTurns }
         }
         case 'turn_created': {
@@ -74,19 +78,20 @@ function reducer(state: AppState, action: Action): AppState {
         case 'llm_token':
           return { ...state, thinking: false, streamingContent: msg.accumulated, streamingTurnId: msg.turn_id }
         case 'llm_done': {
+          // Immutable update — don't mutate the existing array
           const newTurns = new Map(state.turns)
-          const turns = newTurns.get(msg.session_id) || []
-          const existingIdx = turns.findIndex(t => t.id === msg.turn_id)
+          const existing = [...(newTurns.get(msg.session_id) || [])]
           const completedTurn: Turn = {
             id: msg.turn_id, session_id: msg.session_id, role: 'assistant',
             content: msg.content, status: 'complete', created_at: '', completed_at: null,
           }
+          const existingIdx = existing.findIndex(t => t.id === msg.turn_id)
           if (existingIdx >= 0) {
-            turns[existingIdx] = completedTurn
+            existing[existingIdx] = completedTurn
           } else {
-            turns.push(completedTurn)
+            existing.push(completedTurn)
           }
-          newTurns.set(msg.session_id, [...turns])
+          newTurns.set(msg.session_id, existing)
           return { ...state, turns: newTurns, streamingTurnId: null, streamingContent: '', thinking: false }
         }
         case 'llm_error':

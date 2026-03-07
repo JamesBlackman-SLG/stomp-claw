@@ -200,12 +200,28 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             Some(WsOutgoing::RecordingCancelled { session_id }),
                         Event::PartialTranscript { session_id, text } =>
                             Some(WsOutgoing::PartialTranscript { session_id, text }),
-                        Event::LlmThinking { session_id, turn_id } =>
-                            Some(WsOutgoing::LlmThinking { session_id, turn_id }),
+                        Event::LlmThinking { session_id, turn_id } => {
+                            // LLM just created user + assistant turns — send full turn list so UI has the user message
+                            if let Ok(turns) = db::get_turns(&pool, &session_id).await {
+                                let _ = send_ws(&mut forward_tx, &WsOutgoing::TurnList {
+                                    session_id: session_id.clone(),
+                                    turns,
+                                }).await;
+                            }
+                            Some(WsOutgoing::LlmThinking { session_id, turn_id })
+                        }
                         Event::LlmToken { session_id, turn_id, token, accumulated } =>
                             Some(WsOutgoing::LlmToken { session_id, turn_id, token, accumulated }),
-                        Event::LlmDone { session_id, turn_id, full_response } =>
-                            Some(WsOutgoing::LlmDone { session_id, turn_id, content: full_response }),
+                        Event::LlmDone { session_id, turn_id, full_response } => {
+                            // Send final turn list so UI has the completed assistant turn from DB
+                            if let Ok(turns) = db::get_turns(&pool, &session_id).await {
+                                let _ = send_ws(&mut forward_tx, &WsOutgoing::TurnList {
+                                    session_id: session_id.clone(),
+                                    turns,
+                                }).await;
+                            }
+                            Some(WsOutgoing::LlmDone { session_id, turn_id, content: full_response })
+                        }
                         Event::LlmError { session_id, turn_id, error } =>
                             Some(WsOutgoing::LlmError { session_id, turn_id, error }),
                         Event::SessionSwitched { session_id } => {
@@ -231,17 +247,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             Some(WsOutgoing::SessionDeleted { session_id }),
                         Event::VoiceToggled { enabled } =>
                             Some(WsOutgoing::VoiceToggled { enabled }),
-                        Event::FinalTranscript { session_id, text: _ } => {
-                            // Send user turn creation to UI
-                            if let Ok(turns) = db::get_turns(&pool, &session_id).await {
-                                if let Some(turn) = turns.last() {
-                                    let _ = send_ws(&mut forward_tx, &WsOutgoing::TurnCreated {
-                                        turn: turn.clone(),
-                                    }).await;
-                                }
-                            }
-                            None
-                        }
+                        Event::FinalTranscript { .. } => None,
                         _ => None,
                     };
                     if let Some(msg) = msg {
@@ -311,6 +317,33 @@ async fn handle_ws_message(msg: WsIncoming, tx: &EventSender, pool: &SqlitePool)
         WsIncoming::DeleteSession { session_id } => {
             let _ = db::delete_session(pool, &session_id).await;
             let _ = tx.send(Event::SessionDeleted { session_id });
+            // Switch to next available session or create one
+            let remaining = db::get_sessions(pool).await.unwrap_or_default();
+            if let Some(next) = remaining.first() {
+                let _ = db::set_active_session_id(pool, &next.id).await;
+                let _ = tx.send(Event::SessionSwitched { session_id: next.id.clone() });
+            } else {
+                // No sessions left — create one
+                let name = crate::commands::generate_session_name(&[]);
+                let now = chrono::Utc::now().to_rfc3339();
+                let session = db::Session {
+                    id: format!("stomp-{}", uuid::Uuid::new_v4()),
+                    name,
+                    created_at: now.clone(),
+                    last_used: now,
+                };
+                let _ = db::create_session(pool, &session).await;
+                let _ = db::set_active_session_id(pool, &session.id).await;
+                let _ = tx.send(Event::SessionCreated {
+                    session: crate::events::SessionInfo {
+                        id: session.id.clone(),
+                        name: session.name,
+                        created_at: session.created_at,
+                        last_used: session.last_used,
+                    },
+                });
+                let _ = tx.send(Event::SessionSwitched { session_id: session.id });
+            }
         }
         WsIncoming::ToggleVoice => {
             let current = db::get_config(pool, "voice_enabled").await

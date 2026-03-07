@@ -60,8 +60,12 @@ async fn main() {
     let (tx, _rx) = events::create_event_bus(256);
 
     // Spawn modules
+    let voice_enabled = db::get_config(&pool, "voice_enabled").await
+        .ok().flatten()
+        .map(|v| v == "true")
+        .unwrap_or(false);
     let beep_rx = tx.subscribe();
-    tokio::spawn(beep::run(beep_rx));
+    tokio::spawn(beep::run(beep_rx, voice_enabled));
 
     // Audio runs on a dedicated thread (cpal::Stream is not Send)
     let audio_tx = tx.clone();
@@ -73,7 +77,8 @@ async fn main() {
 
     let trans_tx = tx.clone();
     let trans_rx = tx.subscribe();
-    tokio::spawn(transcription::run(trans_tx, trans_rx));
+    let trans_pool = pool.clone();
+    tokio::spawn(transcription::run(trans_tx, trans_rx, trans_pool));
 
     let llm_tx = tx.clone();
     let llm_rx = tx.subscribe();
@@ -86,11 +91,21 @@ async fn main() {
     let cmd_pool = pool.clone();
     tokio::spawn(handle_voice_commands(cmd_tx, cmd_rx, cmd_pool));
 
+    // Emit initial SessionSwitched so all modules know the active session
+    if let Some(active_id) = db::get_active_session_id(&pool).await.ok().flatten() {
+        tracing::info!("Active session: {}", active_id);
+        let _ = tx.send(events::Event::SessionSwitched { session_id: active_id });
+    }
+
     // MIDI runs on a std::thread (midir callback requirement)
     let midi_tx = tx.clone();
     std::thread::spawn(move || {
         midi::run(midi_tx);
     });
+
+    // Startup sound
+    beep::beep_up();
+    tracing::info!("stomp-claw v2 ready");
 
     // Server runs on the main tokio task (blocks)
     let server_tx = tx.clone();
@@ -160,8 +175,24 @@ async fn handle_voice_commands(
                         }
                     }
                     events::Command::DeleteSession => {
-                        awaiting_delete = true;
-                        // UI will show confirmation prompt
+                        tracing::info!("Delete session requested");
+                        if let Some(id) = db::get_active_session_id(&pool).await.ok().flatten() {
+                            let session_name = db::get_session(&pool, &id).await
+                                .ok().flatten()
+                                .map(|s| s.name)
+                                .unwrap_or_default();
+                            let _ = db::delete_session(&pool, &id).await;
+                            let _ = tx.send(events::Event::SessionDeleted { session_id: id });
+                            beep::speak(&format!("Deleted {}", session_name));
+                            // Switch to another session or create new
+                            let remaining = db::get_sessions(&pool).await.unwrap_or_default();
+                            if let Some(next) = remaining.first() {
+                                let _ = db::set_active_session_id(&pool, &next.id).await;
+                                let _ = tx.send(events::Event::SessionSwitched { session_id: next.id.clone() });
+                            } else {
+                                let _ = tx.send(events::Event::VoiceCommand { command: events::Command::NewSession });
+                            }
+                        }
                     }
                     events::Command::ConfirmDelete => {
                         if awaiting_delete {

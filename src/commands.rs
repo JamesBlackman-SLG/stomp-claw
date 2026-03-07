@@ -83,6 +83,23 @@ pub fn fuzzy_match_session(query: &str, session_names: &[String]) -> Option<Stri
         .map(|(name, _)| name)
 }
 
+pub fn parse_command_with_sessions(transcript: &str, session_names: &[String]) -> Option<Command> {
+    // First try standard command parsing
+    if let Some(cmd) = parse_command(transcript) {
+        return Some(cmd);
+    }
+
+    // Then try bare session name fuzzy match (e.g. just saying "arctic pebble")
+    let text = transcript.trim().to_lowercase();
+    if !text.is_empty() {
+        if let Some(_matched) = fuzzy_match_session(&text, session_names) {
+            return Some(Command::SwitchSession(text));
+        }
+    }
+
+    None
+}
+
 pub fn parse_command(transcript: &str) -> Option<Command> {
     let words = command_words(transcript);
     let text = words.join(" ");

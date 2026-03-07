@@ -1,9 +1,11 @@
 use reqwest::Client;
 use hound::{SampleFormat as HoundFormat, WavSpec, WavWriter};
+use sqlx::SqlitePool;
 use tempfile::NamedTempFile;
 use std::io::Read;
 
 use crate::config;
+use crate::db;
 use crate::events::{Event, EventSender, EventReceiver};
 use crate::commands;
 
@@ -40,7 +42,7 @@ async fn transcribe(samples: &[f32], client: &Client) -> Option<String> {
     if trimmed.is_empty() { None } else { Some(trimmed) }
 }
 
-pub async fn run(tx: EventSender, mut rx: EventReceiver) {
+pub async fn run(tx: EventSender, mut rx: EventReceiver, pool: SqlitePool) {
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
@@ -54,8 +56,15 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver) {
                     Some(text) => {
                         tracing::info!("Final transcript: {}", text);
 
-                        // Check for voice commands first
-                        if let Some(cmd) = commands::parse_command(&text) {
+                        // Get session names for fuzzy matching
+                        let session_names: Vec<String> = db::get_sessions(&pool).await
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|s| s.name.clone())
+                            .collect();
+
+                        // Check for voice commands (including bare session name matching)
+                        if let Some(cmd) = commands::parse_command_with_sessions(&text, &session_names) {
                             let _ = tx.send(Event::VoiceCommand { command: cmd });
                         } else {
                             let _ = tx.send(Event::FinalTranscript {
