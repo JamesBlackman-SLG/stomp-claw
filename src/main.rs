@@ -2202,14 +2202,16 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                         log("🏁 Stream done, breaking outer loop");
                         break;
                     }
+                    // Only timeout after we've received content (thinking phase can be long)
+                    let timeout_secs = if full_reply.is_empty() { 120 } else { 5 };
                     let chunk = match tokio::time::timeout(
-                        std::time::Duration::from_secs(5),
+                        std::time::Duration::from_secs(timeout_secs),
                         stream.next()
                     ).await {
                         Ok(Some(chunk)) => chunk?,
                         Ok(None) => { log("🏁 Stream ended naturally"); break; }
                         Err(_) => {
-                            log("🏁 Stream read timed out (5s), treating as done");
+                            log(&format!("🏁 Stream read timed out ({}s), treating as done", timeout_secs));
                             break;
                         }
                     };
