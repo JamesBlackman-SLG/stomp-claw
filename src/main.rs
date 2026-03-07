@@ -391,7 +391,9 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         function hasLiveActivity(content) {
             if (!content) return false;
             let c = content.trim();
-            return c !== '' && c !== 'Waiting for recording...';
+            if (c === '' || c === 'Waiting for recording...') return false;
+            let lines = c.split('\\n').filter(l => !l.startsWith('# ') && l.trim() !== '' && l.trim() !== 'Waiting for recording...' && l.trim() !== 'Hold the pedal and speak...');
+            return lines.length > 0;
         }
 
         function renderHistoryView() {
@@ -1272,18 +1274,9 @@ fn update_live_thinking_for(user: &str, path: &str) {
 }
 
 fn restore_live_from_history() {
-    let session_id = get_active_session_id();
-    let turns = read_turns_after(&session_id, 0);
-    if let Some(last) = turns.last() {
-        let live_content = format!(
-            "{}## {} - You said:\n{}\n\n### Alan replied:\n{}\n---\n",
-            session_header(), last.timestamp, last.user, last.assistant
-        );
-        let _ = std::fs::write(&live_log_path(), live_content);
-        return;
-    }
-    // No history — show a clean slate
-    let live_content = format!("{}Hold the pedal and speak...\n", session_header());
+    // With per-turn rendering, history view shows turns directly.
+    // Live file just needs a clean slate — no need to replay the last turn.
+    let live_content = format!("{}Waiting for recording...\n", session_header());
     let _ = std::fs::write(&live_log_path(), live_content);
 }
 
