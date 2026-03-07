@@ -5,16 +5,17 @@ import { StreamingMessage } from './StreamingMessage'
 
 export function ChatView() {
   const { activeSessionId, turns, streamingTurnId, streamingContent, thinking } = useAppState()
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   const sessionTurns = turns.get(activeSessionId) || []
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'instant' })
+    const el = containerRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [sessionTurns.length, streamingContent, thinking])
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+    <div ref={containerRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
       {sessionTurns.length === 0 && !thinking && !streamingTurnId && (
         <div className="flex items-center justify-center h-full text-text-dim text-sm">
           Hold the pedal to speak, or type below.
@@ -33,7 +34,7 @@ export function ChatView() {
       {streamingTurnId && streamingContent && (
         <StreamingMessage content={streamingContent} />
       )}
-      <div ref={bottomRef} />
+      <div />
     </div>
   )
 }
