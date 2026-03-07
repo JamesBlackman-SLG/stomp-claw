@@ -45,6 +45,7 @@ enum WsOutgoing {
     LlmDone { session_id: String, turn_id: i64, content: String },
     LlmError { session_id: String, turn_id: i64, error: String },
     VoiceToggled { enabled: bool },
+    ShowHelp,
     Config { voice_enabled: bool, active_session_id: String },
 }
 
@@ -250,6 +251,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             Some(WsOutgoing::SessionDeleted { session_id }),
                         Event::VoiceToggled { enabled } =>
                             Some(WsOutgoing::VoiceToggled { enabled }),
+                        Event::ShowHelp => Some(WsOutgoing::ShowHelp),
                         Event::FinalTranscript { .. } => None,
                         _ => None,
                     };

@@ -32,6 +32,7 @@ export type WsMessage =
   | { type: 'llm_done'; session_id: string; turn_id: number; content: string }
   | { type: 'llm_error'; session_id: string; turn_id: number; error: string }
   | { type: 'voice_toggled'; enabled: boolean }
+  | { type: 'show_help' }
   | { type: 'config'; voice_enabled: boolean; active_session_id: string }
 
 // Client -> Server messages

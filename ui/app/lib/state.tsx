@@ -13,11 +13,13 @@ interface AppState {
   voiceEnabled: boolean
   connected: boolean
   thinking: boolean
+  showHelp: boolean
 }
 
 type Action =
   | { type: 'ws_message'; msg: WsMessage }
   | { type: 'set_connected'; connected: boolean }
+  | { type: 'set_show_help'; show: boolean }
 
 const initialState: AppState = {
   sessions: [],
@@ -30,10 +32,14 @@ const initialState: AppState = {
   voiceEnabled: true,
   connected: false,
   thinking: false,
+  showHelp: false,
 }
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
+    case 'set_show_help':
+      return { ...state, showHelp: action.show }
+
     case 'set_connected':
       if (action.connected) {
         // On reconnect, clear all stale state — server will send fresh data
@@ -98,6 +104,8 @@ function reducer(state: AppState, action: Action): AppState {
           return { ...state, streamingTurnId: null, streamingContent: '', thinking: false }
         case 'voice_toggled':
           return { ...state, voiceEnabled: msg.enabled }
+        case 'show_help':
+          return { ...state, showHelp: true }
         default:
           return state
       }
@@ -108,6 +116,7 @@ function reducer(state: AppState, action: Action): AppState {
 }
 
 const StateContext = createContext<AppState>(initialState)
+const DispatchContext = createContext<React.Dispatch<Action>>(() => {})
 const WsContext = createContext<WebSocketManager | null>(null)
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -126,12 +135,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   return (
     <WsContext.Provider value={wsRef.current}>
-      <StateContext.Provider value={state}>
-        {children}
-      </StateContext.Provider>
+      <DispatchContext.Provider value={dispatch}>
+        <StateContext.Provider value={state}>
+          {children}
+        </StateContext.Provider>
+      </DispatchContext.Provider>
     </WsContext.Provider>
   )
 }
 
 export function useAppState() { return useContext(StateContext) }
+export function useDispatch() { return useContext(DispatchContext) }
 export function useWs() { return useContext(WsContext) }

@@ -111,12 +111,15 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver) {
                         if start.elapsed().as_secs_f64() > 0.5 {
                             let snapshot = samples2.lock().unwrap().clone();
                             if let Some(text) = partial_transcribe(&snapshot, &client2).await {
-                                // Check for cancel keywords
+                                // Check for cancel keywords — clear buffer and let user keep talking
                                 if commands::is_cancel_keyword(&text) {
-                                    tracing::info!("Cancel keyword detected: {}", text);
-                                    recording2.store(false, Ordering::Relaxed);
-                                    let _ = tx2.send(Event::RecordingCancelled { session_id: sid.clone() });
-                                    break;
+                                    tracing::info!("Cancel keyword detected, resetting buffer: {}", text);
+                                    samples2.lock().unwrap().clear();
+                                    let _ = tx2.send(Event::PartialTranscript {
+                                        session_id: sid.clone(),
+                                        text: String::new(),
+                                    });
+                                    continue;
                                 }
                                 let _ = tx2.send(Event::PartialTranscript {
                                     session_id: sid.clone(),

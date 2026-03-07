@@ -41,7 +41,8 @@ pub fn generate_session_name(existing: &[String]) -> String {
 fn command_words(text: &str) -> Vec<String> {
     text.split_whitespace()
         .map(|w| w.to_lowercase())
-        .filter(|w| w.chars().all(|c| c.is_alphanumeric()))
+        .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>())
+        .filter(|w| !w.is_empty())
         .collect()
 }
 
@@ -83,6 +84,11 @@ pub fn fuzzy_match_session(query: &str, session_names: &[String]) -> Option<Stri
         .map(|(name, _)| name)
 }
 
+fn strip_punctuation(text: &str) -> String {
+    text.chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect::<String>()
+        .split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 pub fn parse_command_with_sessions(transcript: &str, session_names: &[String]) -> Option<Command> {
     // First try standard command parsing
     if let Some(cmd) = parse_command(transcript) {
@@ -90,7 +96,7 @@ pub fn parse_command_with_sessions(transcript: &str, session_names: &[String]) -
     }
 
     // Then try bare session name fuzzy match (e.g. just saying "arctic pebble")
-    let text = transcript.trim().to_lowercase();
+    let text = strip_punctuation(&transcript.trim().to_lowercase());
     if !text.is_empty() {
         if let Some(_matched) = fuzzy_match_session(&text, session_names) {
             return Some(Command::SwitchSession(text));
@@ -164,7 +170,7 @@ pub fn parse_command(transcript: &str) -> Option<Command> {
 }
 
 pub fn is_cancel_keyword(text: &str) -> bool {
-    let lower = text.to_lowercase();
+    let lower = strip_punctuation(&text.to_lowercase());
     lower.contains("ignore this")
         || lower.contains("never mind")
         || lower.contains("forget it")

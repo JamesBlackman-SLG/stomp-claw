@@ -56,6 +56,9 @@ pub enum Event {
     // Config
     VoiceToggled { enabled: bool },
 
+    // UI
+    ShowHelp,
+
     // UI-originated
     UserTextMessage { session_id: String, text: String },
 }

@@ -224,7 +224,7 @@ async fn handle_voice_commands(
                         let _ = tx.send(events::Event::VoiceToggled { enabled: false });
                     }
                     events::Command::Help => {
-                        // Help is handled by the UI
+                        let _ = tx.send(events::Event::ShowHelp);
                     }
                 }
             }
