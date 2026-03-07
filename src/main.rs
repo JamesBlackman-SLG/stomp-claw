@@ -359,18 +359,16 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         function renderHistoryView() {
             if (showingHelp) return;
 
-            // Ensure turn container exists
+            // Always ensure containers exist
+            if (!document.getElementById('turns-container')) {
+                contentEl.innerHTML = '<div id="turns-container"></div><div id="live-activity"></div>';
+            }
             let container = document.getElementById('turns-container');
             let liveEl = document.getElementById('live-activity');
-            if (!container) {
-                contentEl.innerHTML = '<div id="turns-container"></div><div id="live-activity"></div>';
-                container = document.getElementById('turns-container');
-                liveEl = document.getElementById('live-activity');
-            }
 
-            // Append only new turns
+            // Append any turns not yet in the DOM
             for (const turn of cachedTurns) {
-                if (!document.querySelector('[data-turn-id="' + turn.id + '"]')) {
+                if (!container.querySelector('[data-turn-id="' + turn.id + '"]')) {
                     const div = document.createElement('div');
                     div.setAttribute('data-turn-id', turn.id);
                     div.innerHTML = renderTurnHtml(turn);
@@ -379,8 +377,13 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             }
 
             // Empty history placeholder
-            if (cachedTurns.length === 0 && !container.children.length) {
-                container.innerHTML = '<span style="color:#6e7681">No history for this session yet.</span><br>';
+            let placeholder = container.querySelector('.empty-placeholder');
+            if (cachedTurns.length === 0 && container.querySelectorAll('[data-turn-id]').length === 0) {
+                if (!placeholder) {
+                    container.innerHTML = '<span class="empty-placeholder" style="color:#6e7681">No history for this session yet.</span><br>';
+                }
+            } else if (placeholder) {
+                placeholder.remove();
             }
 
             // Always re-render live activity
@@ -418,19 +421,17 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             fetch('/turns?after=' + lastTurnId)
                 .then(r => r.json())
                 .then(turns => {
-                    if (turns.length === 0) {
+                    if (!turns || turns.length === 0) {
                         renderHistoryView();
                         return;
                     }
-                    let atBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 50);
                     turns.forEach(turn => {
                         cachedTurns.push(turn);
                         lastTurnId = turn.id;
                     });
                     renderHistoryView();
-                    if (atBottom) {
-                        window.scrollTo(0, document.body.scrollHeight);
-                    }
+                    // Always scroll to bottom when new turns arrive
+                    setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 50);
                 })
                 .catch(() => {});
         }
@@ -636,7 +637,9 @@ fn start_viewer(busy_sessions: Arc<Mutex<HashSet<String>>>) {
     let server = Server::new(VIEWER_PORT, move |request| {
         rouille::router!(request,
             (GET) ["/"] => {
-                rouille::Response::html(VIEWER_HTML)
+                let mut resp = rouille::Response::html(VIEWER_HTML);
+                resp.headers.push(("Cache-Control".into(), "no-store, no-cache, must-revalidate".into()));
+                resp
             },
             (GET) ["/events"] => {
                 let reader = ViewerFileReader::new();
