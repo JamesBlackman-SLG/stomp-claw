@@ -2198,7 +2198,10 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                 let mut stream_done = false;
 
                 while let Some(chunk) = stream.next().await {
-                    if stream_done { break; }
+                    if stream_done {
+                        log("🏁 Stream done, breaking outer loop");
+                        break;
+                    }
                     let chunk = chunk?;
                     buffer.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -2213,6 +2216,7 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
 
                         if let Some(data) = line.strip_prefix("data: ") {
                             if data.trim() == "[DONE]" {
+                                log("🏁 Received [DONE] marker");
                                 stream_done = true;
                                 break;
                             }
@@ -2227,6 +2231,11 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                                 }
                             }
                         }
+                    }
+                    // Also check remaining buffer for [DONE] without trailing newline
+                    if !stream_done && buffer.trim().contains("[DONE]") {
+                        log("🏁 Received [DONE] in buffer remainder");
+                        stream_done = true;
                     }
                 }
 
