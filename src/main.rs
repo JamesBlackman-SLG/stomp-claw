@@ -456,6 +456,10 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                     contentEl.innerHTML = '';
                 }
                 if (liveContent !== oldLive && (hadActivity || hasActivity)) {
+                    // Activity just ended — fetch new turns (response was saved as a turn)
+                    if (hadActivity && !hasActivity) {
+                        fetchNewTurns();
+                    }
                     renderHistoryView();
                     if (hasActivity) {
                         window.scrollTo(0, document.body.scrollHeight);
@@ -570,8 +574,8 @@ impl ViewerFileReader {
 
 impl std::io::Read for ViewerFileReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // Throttle reads to avoid hammering the filesystem
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        // Throttle reads — 50ms keeps transcription responsive while saving CPU
+        std::thread::sleep(std::time::Duration::from_millis(50));
 
         let content = fs::read_to_string(&live_log_path())
             .unwrap_or_else(|_| "Waiting for recording...".to_string());
