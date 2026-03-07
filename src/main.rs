@@ -27,7 +27,6 @@ static CONVERSATION_LOG_DIR: LazyLock<String> = LazyLock::new(|| base_dir().join
 static LIVE_DIR: LazyLock<String> = LazyLock::new(|| base_dir().join("live").to_string_lossy().to_string());
 static SESSION_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("session.txt").to_string_lossy().to_string());
 static CONFIG_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("config.toml").to_string_lossy().to_string());
-static VIEW_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("view.txt").to_string_lossy().to_string());
 static SESSIONS_FILE: LazyLock<String> = LazyLock::new(|| base_dir().join("sessions.json").to_string_lossy().to_string());
 
 const PEDAL_CC: u8 = 85;
@@ -114,40 +113,18 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             top: 0;
             z-index: 10;
         }
-        #tabs {
+        .help-btn {
+            padding: 4px 10px;
+            border-radius: 14px;
+            border: 1px solid #30363d;
             background: #161b22;
-            border-bottom: 1px solid #30363d;
-            display: flex;
-            padding: 0 20px;
-        }
-        .tab {
-            padding: 12px 24px;
-            cursor: pointer;
             color: #8b949e;
-            border-bottom: 2px solid transparent;
-            transition: all 0.15s;
-            user-select: none;
-            font-size: 14px;
+            cursor: pointer;
+            font-size: 12px;
             font-family: inherit;
+            margin-left: auto;
         }
-        .tab:hover { color: #c9d1d9; }
-        .tab.active {
-            color: #58a6ff;
-            border-bottom-color: #58a6ff;
-        }
-        .tab .dot {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-right: 8px;
-        }
-        .tab .dot.live { background: #3fb950; animation: pulse 2s infinite; }
-        .tab .dot.history { background: #8b949e; }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
-        }
+        .help-btn:hover { border-color: #58a6ff; color: #c9d1d9; }
         #content {
             max-width: 800px;
             margin: 0 auto;
@@ -295,16 +272,6 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
 </head>
 <body>
     <div id="top-bar">
-        <div id="tabs">
-            <div class="tab active" data-view="live" onclick="switchTab('live')">
-                <span class="dot live"></span>Live
-            </div>
-            <div class="tab" data-view="history" onclick="switchTab('history')">
-                <span class="dot history"></span>History
-            </div>
-            <div style="flex:1"></div>
-            <div class="tab" data-view="help" onclick="switchTab('help')">?</div>
-        </div>
         <div id="session-bar"></div>
     </div>
     <div id="content">Waiting for recording...</div>
@@ -314,11 +281,11 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         const statusEl = document.getElementById('status-text');
         const dot = document.querySelector('#status span');
 
-        let currentView = 'live';
         let liveContent = 'Waiting for recording...';
         let sessionWasBusy = {};
         let sessionReady = {};
         let helpContent = '';
+        let showingHelp = false;
         let eventSource = null;
 
         // Incremental turn rendering state
@@ -381,13 +348,6 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             return html;
         }
 
-        function render(text) {
-            if (!text || text.trim() === '') {
-                text = currentView === 'live' ? 'Waiting for recording...' : 'No history yet.';
-            }
-            contentEl.innerHTML = renderMarkdown(text);
-        }
-
         function hasLiveActivity(content) {
             if (!content) return false;
             let c = content.trim();
@@ -397,6 +357,8 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         }
 
         function renderHistoryView() {
+            if (showingHelp) return;
+
             // Ensure turn container exists
             let container = document.getElementById('turns-container');
             let liveEl = document.getElementById('live-activity');
@@ -429,23 +391,27 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             }
         }
 
-        function switchTab(view) {
-            currentView = view;
-            document.querySelectorAll('.tab').forEach(t => {
-                t.classList.toggle('active', t.dataset.view === view);
-            });
-
-            // Sync back so voice commands and manual clicks stay in agreement
-            fetch('/view/set?v=' + view).catch(() => {});
-
-            if (view === 'live') {
-                render(liveContent);
-            } else if (view === 'help') {
-                fetchHelp();
-            } else {
-                fetchNewTurns();
-                setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 50);
+        function showHelp() {
+            if (showingHelp) {
+                // Toggle off — back to history
+                showingHelp = false;
+                contentEl.innerHTML = '';
+                renderHistoryView();
+                return;
             }
+            showingHelp = true;
+            if (helpContent) {
+                contentEl.innerHTML = helpContent;
+                return;
+            }
+            fetch('/help')
+                .then(r => r.text())
+                .then(html => {
+                    helpContent = html;
+                    if (showingHelp) {
+                        contentEl.innerHTML = helpContent;
+                    }
+                });
         }
 
         function fetchNewTurns() {
@@ -453,7 +419,7 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                 .then(r => r.json())
                 .then(turns => {
                     if (turns.length === 0) {
-                        if (currentView === 'history') renderHistoryView();
+                        renderHistoryView();
                         return;
                     }
                     let atBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 50);
@@ -461,11 +427,9 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                         cachedTurns.push(turn);
                         lastTurnId = turn.id;
                     });
-                    if (currentView === 'history') {
-                        renderHistoryView();
-                        if (atBottom) {
-                            window.scrollTo(0, document.body.scrollHeight);
-                        }
+                    renderHistoryView();
+                    if (atBottom) {
+                        window.scrollTo(0, document.body.scrollHeight);
                     }
                 })
                 .catch(() => {});
@@ -478,37 +442,23 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             if (container) container.innerHTML = '';
         }
 
-        function fetchHelp() {
-            if (helpContent) {
-                contentEl.innerHTML = helpContent;
-                return;
-            }
-            fetch('/help')
-                .then(r => r.text())
-                .then(html => {
-                    helpContent = html;
-                    if (currentView === 'help') {
-                        contentEl.innerHTML = helpContent;
-                    }
-                });
-        }
-
         function connect() {
             eventSource = new EventSource('/events');
 
             eventSource.onmessage = (e) => {
                 let oldLive = liveContent;
                 liveContent = e.data;
-                if (currentView === 'live') {
-                    render(liveContent);
-                } else if (currentView === 'history') {
-                    let hadActivity = hasLiveActivity(oldLive);
-                    let hasActivity = hasLiveActivity(liveContent);
-                    if (liveContent !== oldLive && (hadActivity || hasActivity)) {
-                        renderHistoryView();
-                        if (hasActivity) {
-                            window.scrollTo(0, document.body.scrollHeight);
-                        }
+                let hadActivity = hasLiveActivity(oldLive);
+                let hasActivity = hasLiveActivity(liveContent);
+                if (hasActivity && showingHelp) {
+                    // Live activity started — dismiss help overlay
+                    showingHelp = false;
+                    contentEl.innerHTML = '';
+                }
+                if (liveContent !== oldLive && (hadActivity || hasActivity)) {
+                    renderHistoryView();
+                    if (hasActivity) {
+                        window.scrollTo(0, document.body.scrollHeight);
                     }
                 }
             };
@@ -516,7 +466,6 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             eventSource.onopen = () => {
                 statusEl.textContent = 'Connected';
                 dot.className = 'connected';
-                // Refresh everything after reconnect (e.g. after server restart)
                 fetchSessions();
                 resetTurns();
                 fetchNewTurns();
@@ -530,25 +479,7 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             };
         }
 
-        // Refresh history periodically when on history tab
-        setInterval(() => {
-            if (currentView === 'history') fetchNewTurns();
-        }, 3000);
-
-        // Poll for voice-triggered view switches
-        let lastServerView = 'live';
-        setInterval(() => {
-            fetch('/view')
-                .then(r => r.text())
-                .then(view => {
-                    view = view.trim();
-                    if (view && view !== lastServerView) {
-                        lastServerView = view;
-                        switchTab(view);
-                    }
-                })
-                .catch(() => {});
-        }, 500);
+        setInterval(fetchNewTurns, 3000);
 
         // Session bar
         const sessionBar = document.getElementById('session-bar');
@@ -594,6 +525,13 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
                     .then(() => { fetchSessions(); resetTurns(); fetchNewTurns(); });
             };
             sessionBar.appendChild(newBtn);
+
+            // Help button at the end
+            const helpBtn = document.createElement('button');
+            helpBtn.className = 'help-btn';
+            helpBtn.textContent = '?';
+            helpBtn.onclick = showHelp;
+            sessionBar.appendChild(helpBtn);
         }
 
         function fetchSessions() {
@@ -613,6 +551,7 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
         setInterval(fetchSessions, 2000);
 
         connect();
+        fetchNewTurns();
     </script>
 </body>
 </html>"#;
@@ -708,20 +647,6 @@ fn start_viewer(busy_sessions: Arc<Mutex<HashSet<String>>>) {
                     data: rouille::ResponseBody::from_reader(Box::new(reader)),
                     upgrade: None,
                 }
-            },
-            (GET) ["/view"] => {
-                let view = fs::read_to_string(VIEW_FILE.as_str())
-                    .unwrap_or_else(|_| "live".to_string())
-                    .trim().to_string();
-                rouille::Response::text(view)
-            },
-            (GET) ["/view/set"] => {
-                if let Some(v) = request.get_param("v") {
-                    if v == "live" || v == "history" || v == "help" {
-                        let _ = fs::write(VIEW_FILE.as_str(), &v);
-                    }
-                }
-                rouille::Response::text("ok")
             },
             (GET) ["/history"] => {
                 let session = fs::read_to_string(SESSION_FILE.as_str())
@@ -1591,19 +1516,11 @@ fn check_voice_command(transcript: &str) -> Option<bool> {
     }
 }
 
-/// Check if the transcript is a viewer switch command
-fn check_view_command(transcript: &str) -> Option<&'static str> {
+/// Check if the transcript is a help command
+fn check_help_command(transcript: &str) -> bool {
     let words = command_words(transcript);
-    match words.iter().map(|w| w.as_str()).collect::<Vec<_>>().as_slice() {
-        ["live", "view"] | ["show", "live"] | ["view", "live"] | ["live"] => Some("live"),
-        ["history", "view"] | ["show", "history"] | ["view", "history"] | ["history"] => Some("history"),
-        ["help"] | ["commands"] | ["show", "help"] | ["show", "commands"] => Some("help"),
-        _ => None,
-    }
-}
-
-fn switch_view(view: &str) {
-    let _ = std::fs::write(VIEW_FILE.as_str(), view);
+    matches!(words.iter().map(|w| w.as_str()).collect::<Vec<_>>().as_slice(),
+        ["help"] | ["commands"] | ["show", "help"] | ["show", "commands"])
 }
 
 #[derive(Deserialize, Debug)]
@@ -2185,17 +2102,10 @@ fn process(samples: Vec<f32>, config: Arc<Mutex<Config>>, thinking: Arc<AtomicBo
                 return Ok::<_, Box<dyn std::error::Error>>(());
             }
 
-            // Check for view switch command
-            if let Some(view) = check_view_command(&transcript) {
-                switch_view(view);
+            // Check for help command
+            if check_help_command(&transcript) {
                 thinking.store(false, Ordering::Relaxed);
-                if view == "help" {
-                    log("👁️ Showing help page");
-                } else {
-                    let msg = format!("Switched to {} view.", view);
-                    log(&format!("👁️ {}", msg));
-                    update_live(&transcript, &msg);
-                }
+                log("👁️ Showing help page");
                 return Ok::<_, Box<dyn std::error::Error>>(());
             }
 
