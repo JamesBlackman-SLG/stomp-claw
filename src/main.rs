@@ -583,24 +583,25 @@ impl std::io::Read for ViewerFileReader {
         let content = fs::read_to_string(&live_log_path())
             .unwrap_or_else(|_| "Waiting for recording...".to_string());
 
-        if self.first_read || content != self.last_content {
+        let msg = if self.first_read || content != self.last_content {
             self.first_read = false;
             self.last_content = content.clone();
-            let msg = format!("data: {}\n\n", escape_sse(&content));
-            let bytes = msg.as_bytes();
-            if bytes.len() <= buf.len() {
-                buf[..bytes.len()].copy_from_slice(bytes);
-                return Ok(bytes.len());
-            }
-            // Message too large for buffer — send in chunks via pending buffer
-            let to_copy = buf.len();
-            buf[..to_copy].copy_from_slice(&bytes[..to_copy]);
-            return Ok(to_copy);
-        }
+            format!("data: {}\n\n", escape_sse(&content))
+        } else {
+            ": heartbeat\n\n".to_string()
+        };
 
-        // Send heartbeat every ~3 seconds (200ms * 15 iterations)
-        let heartbeat = ": heartbeat\n\n";
-        let bytes = heartbeat.as_bytes();
+        // Pad to >1024 bytes so tiny_http's BufWriter flushes immediately.
+        // Without this, small messages sit in the buffer and the client
+        // receives nothing until ~1KB accumulates (many seconds with the
+        // 200ms read throttle).
+        let padded = if msg.len() < 1200 {
+            format!(":{}\n{}", " ".repeat(1200 - msg.len()), msg)
+        } else {
+            msg
+        };
+
+        let bytes = padded.as_bytes();
         let to_copy = std::cmp::min(buf.len(), bytes.len());
         buf[..to_copy].copy_from_slice(&bytes[..to_copy]);
         Ok(to_copy)
