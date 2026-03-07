@@ -392,7 +392,7 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             if (!content) return false;
             let c = content.trim();
             if (c === '' || c === 'Waiting for recording...') return false;
-            let lines = c.split('\\n').filter(l => !l.startsWith('# ') && l.trim() !== '' && l.trim() !== 'Waiting for recording...' && l.trim() !== 'Hold the pedal and speak...');
+            let lines = c.split('\\n').filter(l => !l.startsWith('# ') && !l.startsWith('**Session:') && l.trim() !== '' && l.trim() !== 'Waiting for recording...' && l.trim() !== 'Hold the pedal and speak...');
             return lines.length > 0;
         }
 
