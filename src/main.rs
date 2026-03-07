@@ -333,41 +333,25 @@ const VIEWER_HTML: &str = r#"<!DOCTYPE html>
             return html;
         }
 
-        function simpleMarkdown(text) {
-            let lines = text.split(String.fromCharCode(10));
-            let html = '';
-            for (let line of lines) {
-                let escaped = escapeHtml(line);
-                if (escaped.trim() === '') {
-                    html += '<br>';
-                } else if (escaped.startsWith('- ')) {
-                    html += '<span class="alan-text">&bull; ' + inlineMd(escaped.substring(2)) + '</span><br>';
-                } else {
-                    html += '<span class="alan-text">' + inlineMd(escaped) + '</span><br>';
-                }
-            }
-            return html;
-        }
-
-        function inlineMd(text) {
-            // Bold: **text**
-            text = text.replace(/\x2a\x2a(.+?)\x2a\x2a/g, '<strong>$1</strong>');
-            // Italic: *text*
-            text = text.replace(/\x2a(.+?)\x2a/g, '<em>$1</em>');
-            // Code: `text`
-            text = text.replace(/`(.+?)`/g, '<code>$1</code>');
-            return text;
-        }
-
         function renderTurnHtml(turn) {
-            let html = '';
+            var NL = String.fromCharCode(10);
+            var html = '';
             html += '<span class="you-said">## ' + escapeHtml(turn.timestamp) + ' - You said:</span><br>';
-            turn.user.split(String.fromCharCode(10)).forEach(line => {
-                html += '<span class="user-text">' + escapeHtml(line) + '</span><br>';
-            });
+            var userLines = turn.user.split(NL);
+            for (var i = 0; i < userLines.length; i++) {
+                html += '<span class="user-text">' + escapeHtml(userLines[i]) + '</span><br>';
+            }
             html += '<br>';
             html += '<span class="alan-replied">### Alan replied:</span><br>';
-            html += simpleMarkdown(turn.assistant);
+            var asstLines = turn.assistant.split(NL);
+            for (var j = 0; j < asstLines.length; j++) {
+                var line = escapeHtml(asstLines[j]);
+                if (line.trim() === '') {
+                    html += '<br>';
+                } else {
+                    html += '<span class="alan-text">' + line + '</span><br>';
+                }
+            }
             html += '<span class="separator">---</span><br>';
             return html;
         }
