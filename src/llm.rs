@@ -1,1 +1,266 @@
-// OpenClaw client — SSE parsing, streaming to event bus
+use futures::StreamExt;
+use reqwest::Client;
+use serde::Deserialize;
+use sqlx::SqlitePool;
+
+use crate::config;
+use crate::db;
+use crate::events::{Event, EventSender, EventReceiver};
+
+#[derive(Deserialize)]
+struct StreamChunk {
+    choices: Vec<StreamChoice>,
+}
+
+#[derive(Deserialize)]
+struct StreamChoice {
+    delta: StreamDelta,
+}
+
+#[derive(Deserialize)]
+struct StreamDelta {
+    content: Option<String>,
+}
+
+async fn send_to_llm(
+    tx: &EventSender,
+    pool: &SqlitePool,
+    client: &Client,
+    session_id: &str,
+    user_message: &str,
+    voice_enabled: bool,
+) {
+    // Create user turn in DB
+    let _user_turn_id = match db::create_turn(pool, session_id, "user", user_message, "complete").await {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::error!("Failed to create user turn: {}", e);
+            return;
+        }
+    };
+
+    // Create assistant turn with streaming status
+    let assistant_turn_id = match db::create_turn(pool, session_id, "assistant", "", "streaming").await {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::error!("Failed to create assistant turn: {}", e);
+            return;
+        }
+    };
+
+    let _ = tx.send(Event::LlmThinking {
+        session_id: session_id.to_string(),
+        turn_id: assistant_turn_id,
+    });
+
+    let (system_prompt, max_tokens) = if voice_enabled {
+        (config::VOICE_SYSTEM_PROMPT, config::VOICE_MAX_TOKENS)
+    } else {
+        (config::TEXT_SYSTEM_PROMPT, config::TEXT_MAX_TOKENS)
+    };
+
+    let payload = serde_json::json!({
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ],
+        "stream": true,
+        "max_tokens": max_tokens,
+        "user": "stomp-claw"
+    });
+
+    let resp = match client.post(config::OPENCLAW_URL)
+        .header("Authorization", format!("Bearer {}", config::OPENCLAW_TOKEN))
+        .header("Content-Type", "application/json")
+        .header("x-openclaw-session-key", session_id)
+        .json(&payload)
+        .send().await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            let error = format!("OpenClaw request failed: {}", e);
+            tracing::error!("{}", error);
+            let _ = db::error_turn(pool, assistant_turn_id, &error).await;
+            let _ = tx.send(Event::LlmError {
+                session_id: session_id.to_string(),
+                turn_id: assistant_turn_id,
+                error,
+            });
+            return;
+        }
+    };
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let error = format!("HTTP {}: {}", status, body);
+        tracing::error!("OpenClaw error: {}", error);
+        let _ = db::error_turn(pool, assistant_turn_id, &error).await;
+        let _ = tx.send(Event::LlmError {
+            session_id: session_id.to_string(),
+            turn_id: assistant_turn_id,
+            error,
+        });
+        return;
+    }
+
+    // Stream the response
+    let mut full_reply = String::new();
+    let mut stream = resp.bytes_stream();
+    let mut buffer = String::new();
+    let mut stream_done = false;
+    let mut first_token = true;
+    let mut token_count = 0u32;
+    let mut last_db_update = std::time::Instant::now();
+
+    loop {
+        if stream_done { break; }
+
+        let timeout_secs = if first_token { 120 } else { 10 };
+        let chunk = match tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            stream.next()
+        ).await {
+            Ok(Some(Ok(chunk))) => chunk,
+            Ok(Some(Err(e))) => {
+                tracing::error!("Stream error: {}", e);
+                break;
+            }
+            Ok(None) => {
+                tracing::info!("Stream ended naturally");
+                break;
+            }
+            Err(_) => {
+                tracing::info!("Stream timed out ({}s), treating as done", timeout_secs);
+                break;
+            }
+        };
+
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(newline_pos) = buffer.find('\n') {
+            let line = buffer[..newline_pos].trim().to_string();
+            buffer = buffer[newline_pos + 1..].to_string();
+
+            if line.is_empty() || line.starts_with(':') { continue; }
+
+            if let Some(data) = line.strip_prefix("data: ") {
+                if data.trim() == "[DONE]" {
+                    tracing::info!("Received [DONE]");
+                    stream_done = true;
+                    break;
+                }
+
+                if let Ok(parsed) = serde_json::from_str::<StreamChunk>(data) {
+                    if let Some(choice) = parsed.choices.first() {
+                        if let Some(content) = &choice.delta.content {
+                            full_reply.push_str(content);
+                            first_token = false;
+                            token_count += 1;
+
+                            let _ = tx.send(Event::LlmToken {
+                                session_id: session_id.to_string(),
+                                turn_id: assistant_turn_id,
+                                token: content.clone(),
+                                accumulated: full_reply.clone(),
+                            });
+
+                            // Debounced DB update: every 10 tokens or 500ms
+                            if token_count % 10 == 0 || last_db_update.elapsed().as_millis() > 500 {
+                                let _ = db::update_turn_content(pool, assistant_turn_id, &full_reply).await;
+                                last_db_update = std::time::Instant::now();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check remaining buffer for [DONE] without trailing newline
+        if !stream_done && buffer.trim().contains("[DONE]") {
+            tracing::info!("Received [DONE] in buffer remainder");
+            stream_done = true;
+        }
+    }
+
+    if full_reply.is_empty() {
+        let error = "Empty response from OpenClaw".to_string();
+        let _ = db::error_turn(pool, assistant_turn_id, &error).await;
+        let _ = tx.send(Event::LlmError {
+            session_id: session_id.to_string(),
+            turn_id: assistant_turn_id,
+            error,
+        });
+    } else {
+        let _ = db::complete_turn(pool, assistant_turn_id, &full_reply).await;
+        let _ = tx.send(Event::LlmDone {
+            session_id: session_id.to_string(),
+            turn_id: assistant_turn_id,
+            full_response: full_reply,
+        });
+    }
+}
+
+pub async fn run(tx: EventSender, mut rx: EventReceiver, pool: SqlitePool) {
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+        .expect("Failed to create HTTP client");
+
+    // Track voice state
+    let mut voice_enabled = db::get_config(&pool, "voice_enabled").await
+        .ok().flatten()
+        .map(|v| v == "true")
+        .unwrap_or(true);
+
+    // Track busy sessions
+    let mut busy_sessions = std::collections::HashSet::new();
+
+    loop {
+        match rx.recv().await {
+            Ok(Event::FinalTranscript { session_id, text }) => {
+                if busy_sessions.contains(&session_id) {
+                    tracing::warn!("Session {} is busy, rejecting message", session_id);
+                    let _ = tx.send(Event::LlmError {
+                        session_id: session_id.clone(),
+                        turn_id: 0,
+                        error: "Session is busy".to_string(),
+                    });
+                    continue;
+                }
+
+                busy_sessions.insert(session_id.clone());
+                let _ = db::touch_session(&pool, &session_id).await;
+
+                send_to_llm(&tx, &pool, &client, &session_id, &text, voice_enabled).await;
+
+                busy_sessions.remove(&session_id);
+            }
+            Ok(Event::UserTextMessage { session_id, text }) => {
+                if busy_sessions.contains(&session_id) {
+                    let _ = tx.send(Event::LlmError {
+                        session_id: session_id.clone(),
+                        turn_id: 0,
+                        error: "Session is busy".to_string(),
+                    });
+                    continue;
+                }
+
+                busy_sessions.insert(session_id.clone());
+                let _ = db::touch_session(&pool, &session_id).await;
+
+                send_to_llm(&tx, &pool, &client, &session_id, &text, voice_enabled).await;
+
+                busy_sessions.remove(&session_id);
+            }
+            Ok(Event::VoiceToggled { enabled }) => {
+                voice_enabled = enabled;
+            }
+            Ok(_) => {}
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                tracing::warn!("LLM lagged by {} events", n);
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
