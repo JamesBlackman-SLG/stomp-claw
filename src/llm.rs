@@ -7,19 +7,12 @@ use crate::config;
 use crate::db;
 use crate::events::{Event, EventSender, EventReceiver};
 
+/// Responses API streaming event — we only care about text deltas and completion
 #[derive(Deserialize)]
-struct StreamChunk {
-    choices: Vec<StreamChoice>,
-}
-
-#[derive(Deserialize)]
-struct StreamChoice {
-    delta: StreamDelta,
-}
-
-#[derive(Deserialize)]
-struct StreamDelta {
-    content: Option<String>,
+struct ResponsesEvent {
+    #[serde(rename = "type")]
+    event_type: String,
+    delta: Option<String>,
 }
 
 async fn send_to_llm(
@@ -63,38 +56,50 @@ async fn send_to_llm(
         (config::TEXT_SYSTEM_PROMPT, config::TEXT_MAX_TOKENS)
     };
 
-    let user_content = if images.is_empty() {
-        serde_json::json!(user_message)
-    } else {
+    // Build user content parts for Responses API
+    let mut user_parts = vec![serde_json::json!({
+        "type": "input_text",
+        "text": user_message
+    })];
+
+    if !images.is_empty() {
         use base64::Engine;
-        let mut parts = vec![serde_json::json!({"type": "text", "text": user_message})];
         for img_path in images {
             if let Ok(bytes) = tokio::fs::read(img_path).await {
                 let ext = std::path::Path::new(img_path)
                     .extension().and_then(|e| e.to_str()).unwrap_or("png");
-                let mime = match ext {
+                let media_type = match ext {
                     "jpg" | "jpeg" => "image/jpeg",
                     "gif" => "image/gif",
                     "webp" => "image/webp",
                     _ => "image/png",
                 };
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                parts.push(serde_json::json!({
-                    "type": "image_url",
-                    "image_url": {"url": format!("data:{};base64,{}", mime, b64)}
+                user_parts.push(serde_json::json!({
+                    "type": "input_image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": b64
+                    }
                 }));
             }
         }
-        serde_json::json!(parts)
-    };
+    }
 
+    // Build Responses API payload
     let payload = serde_json::json!({
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content}
+        "model": "openclaw",
+        "instructions": system_prompt,
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": user_parts
+            }
         ],
         "stream": true,
-        "max_tokens": max_tokens,
+        "max_output_tokens": max_tokens,
         "user": "stomp-claw"
     });
 
@@ -107,7 +112,7 @@ async fn send_to_llm(
     {
         Ok(r) => r,
         Err(e) => {
-            let error = format!("OpenClaw request failed: {}", e);
+            let error = format!("OpenClaw request failed: {:?}", e);
             tracing::error!("{}", error);
             let _ = db::error_turn(pool, assistant_turn_id, &error).await;
             let _ = tx.send(Event::LlmError {
@@ -133,7 +138,7 @@ async fn send_to_llm(
         return;
     }
 
-    // Stream the response
+    // Stream the response (Responses API SSE format)
     let mut full_reply = String::new();
     let mut stream = resp.bytes_stream();
     let mut buffer = String::new();
@@ -171,7 +176,11 @@ async fn send_to_llm(
             let line = buffer[..newline_pos].trim().to_string();
             buffer = buffer[newline_pos + 1..].to_string();
 
-            if line.is_empty() || line.starts_with(':') { continue; }
+            if line.is_empty() { continue; }
+
+            // Responses API uses "event: <type>" + "data: <json>" format
+            // Skip event: lines, process data: lines
+            if line.starts_with("event:") || line.starts_with(':') { continue; }
 
             if let Some(data) = line.strip_prefix("data: ") {
                 if data.trim() == "[DONE]" {
@@ -180,17 +189,17 @@ async fn send_to_llm(
                     break;
                 }
 
-                if let Ok(parsed) = serde_json::from_str::<StreamChunk>(data) {
-                    if let Some(choice) = parsed.choices.first() {
-                        if let Some(content) = &choice.delta.content {
-                            full_reply.push_str(content);
+                if let Ok(evt) = serde_json::from_str::<ResponsesEvent>(data) {
+                    if evt.event_type == "response.output_text.delta" {
+                        if let Some(delta) = &evt.delta {
+                            full_reply.push_str(delta);
                             first_token = false;
                             token_count += 1;
 
                             let _ = tx.send(Event::LlmToken {
                                 session_id: session_id.to_string(),
                                 turn_id: assistant_turn_id,
-                                token: content.clone(),
+                                token: delta.clone(),
                                 accumulated: full_reply.clone(),
                             });
 
@@ -200,15 +209,13 @@ async fn send_to_llm(
                                 last_db_update = std::time::Instant::now();
                             }
                         }
+                    } else if evt.event_type == "response.completed" {
+                        tracing::info!("Received response.completed");
+                        stream_done = true;
+                        break;
                     }
                 }
             }
-        }
-
-        // Check remaining buffer for [DONE] without trailing newline
-        if !stream_done && buffer.trim().contains("[DONE]") {
-            tracing::info!("Received [DONE] in buffer remainder");
-            stream_done = true;
         }
     }
 

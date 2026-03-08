@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 // External service endpoints
 pub const NEMO_URL: &str = "http://localhost:5051";
-pub const OPENCLAW_URL: &str = "http://127.0.0.1:18789/v1/chat/completions";
+pub const OPENCLAW_URL: &str = "http://127.0.0.1:18789/v1/responses";
 
 pub fn openclaw_token() -> String {
     std::env::var("OPENCLAW_TOKEN").expect("OPENCLAW_TOKEN env var must be set")
@@ -16,7 +16,7 @@ pub const AUDIO_SINK: &str = "alsa_output.pci-0000_0d_00.4.analog-stereo";
 pub const PEDAL_CC: u8 = 85;
 
 // Server
-pub const SERVER_ADDR: &str = "127.0.0.1:8765";
+pub const SERVER_ADDR: &str = "0.0.0.0:8765";
 
 // System prompts
 pub const VOICE_SYSTEM_PROMPT: &str = "You are talking to James via voice-only (foot pedal + TTS). Keep responses very short - 1-2 sentences max. Be direct and conversational. No long explanations.";

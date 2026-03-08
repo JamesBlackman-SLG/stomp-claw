@@ -6,12 +6,28 @@ interface PendingImage {
   preview: string
 }
 
-function fileToBase64(file: File): Promise<string> {
+const MAX_IMAGE_DIM = 1024
+
+function resizeAndEncode(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = reject
-    reader.readAsDataURL(file)
+    const img = new Image()
+    img.onload = () => {
+      let { width, height } = img
+      if (width > MAX_IMAGE_DIM || height > MAX_IMAGE_DIM) {
+        const scale = MAX_IMAGE_DIM / Math.max(width, height)
+        width = Math.round(width * scale)
+        height = Math.round(height * scale)
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')!
+      ctx.drawImage(img, 0, 0, width, height)
+      resolve(canvas.toDataURL('image/jpeg', 0.85))
+      URL.revokeObjectURL(img.src)
+    }
+    img.onerror = reject
+    img.src = URL.createObjectURL(file)
   })
 }
 
@@ -53,7 +69,7 @@ export function TextInput() {
 
     let imageData: string[] | undefined
     if (images.length > 0) {
-      imageData = await Promise.all(images.map(img => fileToBase64(img.file)))
+      imageData = await Promise.all(images.map(img => resizeAndEncode(img.file)))
     }
 
     ws?.send({

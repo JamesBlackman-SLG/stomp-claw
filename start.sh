@@ -12,6 +12,7 @@ sleep 1
 # Start stomp_claw from this directory (so it finds the beep WAVs)
 # Redirect output and disown so parent shells don't hang waiting on the pipe
 echo "Starting stomp_claw..."
+set -a; source "$SCRIPT_DIR/.env" 2>/dev/null; set +a
 nohup ./target/release/stomp_claw >> ~/.stomp-claw/stomp-claw.log 2>&1 &
 disown
 
