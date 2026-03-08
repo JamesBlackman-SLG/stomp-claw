@@ -32,13 +32,12 @@ export function MessageBubble({ turn }: { turn: Turn }) {
             ))}
           </div>
         )}
-        {isUser ? (
+        {turn.status === 'error' ? (
+          <div className="text-xs text-error">{turn.content || 'Error'}</div>
+        ) : isUser ? (
           turn.content && <p className="whitespace-pre-wrap">{turn.content}</p>
         ) : (
           <MarkdownRenderer content={turn.content} />
-        )}
-        {turn.status === 'error' && (
-          <div className="mt-1 text-xs text-error">Error</div>
         )}
       </div>
     </div>

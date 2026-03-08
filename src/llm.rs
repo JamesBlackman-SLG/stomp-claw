@@ -57,9 +57,15 @@ async fn send_to_llm(
     };
 
     // Build user content parts for Responses API
+    // API requires an input_text part — use placeholder for image-only messages
+    let text = if user_message.is_empty() && !images.is_empty() {
+        "Describe this image."
+    } else {
+        user_message
+    };
     let mut user_parts = vec![serde_json::json!({
         "type": "input_text",
-        "text": user_message
+        "text": text
     })];
 
     if !images.is_empty() {

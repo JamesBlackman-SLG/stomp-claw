@@ -100,8 +100,19 @@ function reducer(state: AppState, action: Action): AppState {
           newTurns.set(msg.session_id, existing)
           return { ...state, turns: newTurns, streamingTurnId: null, streamingContent: '', thinking: false }
         }
-        case 'llm_error':
-          return { ...state, streamingTurnId: null, streamingContent: '', thinking: false }
+        case 'llm_error': {
+          // Update the assistant turn to show error status
+          const newTurns = new Map(state.turns)
+          if (msg.turn_id && msg.session_id) {
+            const existing = [...(newTurns.get(msg.session_id) || [])]
+            const idx = existing.findIndex(t => t.id === msg.turn_id)
+            if (idx >= 0) {
+              existing[idx] = { ...existing[idx], status: 'error', content: msg.error }
+              newTurns.set(msg.session_id, existing)
+            }
+          }
+          return { ...state, turns: newTurns, streamingTurnId: null, streamingContent: '', thinking: false }
+        }
         case 'voice_toggled':
           return { ...state, voiceEnabled: msg.enabled }
         case 'show_help':

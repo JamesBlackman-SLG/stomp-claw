@@ -270,8 +270,16 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             }
                             Some(WsOutgoing::LlmDone { session_id, turn_id, content: full_response })
                         }
-                        Event::LlmError { session_id, turn_id, error } =>
-                            Some(WsOutgoing::LlmError { session_id, turn_id, error }),
+                        Event::LlmError { session_id, turn_id, error } => {
+                            // Send updated turn list so UI sees the error status from DB
+                            if let Ok(turns) = db::get_turns(&pool, &session_id).await {
+                                let _ = send_ws(&mut forward_tx, &WsOutgoing::TurnList {
+                                    session_id: session_id.clone(),
+                                    turns,
+                                }).await;
+                            }
+                            Some(WsOutgoing::LlmError { session_id, turn_id, error })
+                        }
                         Event::SessionSwitched { session_id } => {
                             // Send SessionSwitched first (clears client turns), then TurnList
                             let _ = send_ws(&mut forward_tx, &WsOutgoing::SessionSwitched {
