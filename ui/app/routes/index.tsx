@@ -13,7 +13,10 @@ export function Home() {
   return (
     <>
       <header className="flex items-center justify-between px-4 py-2 border-b border-border">
-        <h1 className="text-accent font-bold text-lg tracking-wider">STOMP CLAW</h1>
+        <div className="flex items-center gap-2.5">
+          <img src="/logo.png" alt="StompClaw" className="h-9 w-9" />
+          <h1 className="text-accent font-bold text-lg tracking-wider">StompClaw</h1>
+        </div>
         <div className="flex items-center gap-3">
           <button
             onClick={() => dispatch({ type: 'set_show_help', show: true })}
