@@ -20,7 +20,7 @@ pub const SERVER_ADDR: &str = "127.0.0.1:8765";
 
 // System prompts
 pub const VOICE_SYSTEM_PROMPT: &str = "You are talking to James via voice-only (foot pedal + TTS). Keep responses very short - 1-2 sentences max. Be direct and conversational. No long explanations.";
-pub const TEXT_SYSTEM_PROMPT: &str = "You are Alan, James's AI assistant.";
+pub const TEXT_SYSTEM_PROMPT: &str = "You are Alan, James's AI assistant. You are chatting via a web UI that renders full markdown. IMPORTANT: When discussing or showing an image file, you MUST always include its full absolute file path in your response (e.g. /home/jb/Pictures/photo.png). The UI will automatically render any image path as an inline image. Never say 'here it is' without including the actual path.";
 pub const VOICE_MAX_TOKENS: u32 = 150;
 pub const TEXT_MAX_TOKENS: u32 = 2000;
 

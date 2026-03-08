@@ -69,6 +69,36 @@ enum WsIncoming {
 #[folder = "ui/dist/client"]
 struct FrontendAssets;
 
+async fn local_file_handler(
+    query: axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let path = match query.get("path") {
+        Some(p) => std::path::PathBuf::from(p),
+        None => return axum::http::StatusCode::BAD_REQUEST.into_response(),
+    };
+
+    // Only serve image files
+    let ext = path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let allowed = matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico");
+    if !allowed {
+        return (axum::http::StatusCode::FORBIDDEN, "Only image files allowed").into_response();
+    }
+
+    match tokio::fs::read(&path).await {
+        Ok(data) => {
+            let mime = mime_guess::from_path(&path).first_or_octet_stream();
+            (
+                [(axum::http::header::CONTENT_TYPE, mime.as_ref().to_string())],
+                data,
+            ).into_response()
+        }
+        Err(_) => axum::http::StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 async fn static_handler(uri: axum::http::Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
@@ -109,6 +139,7 @@ pub async fn run(tx: EventSender, _rx: EventReceiver, pool: SqlitePool) {
         .route("/api/sessions", get(get_sessions))
         .route("/api/sessions/{id}/turns", get(get_turns))
         .route("/api/config", get(get_config))
+        .route("/local-file", get(local_file_handler))
         .fallback(static_handler)
         .with_state(state);
 

@@ -81,10 +81,16 @@ const components: Components = {
   },
 
   img({ src, alt, ...props }) {
+    // Rewrite local filesystem paths to use the local-file endpoint
+    let resolvedSrc = src || ''
+    if (/^(~\/|\/home\/|\/tmp\/)/.test(resolvedSrc)) {
+      const abs = resolvedSrc.replace(/^~\//, '/home/jb/')
+      resolvedSrc = `/local-file?path=${encodeURIComponent(abs)}`
+    }
     return (
-      <a href={src} target="_blank" rel="noopener noreferrer">
+      <a href={resolvedSrc} target="_blank" rel="noopener noreferrer">
         <img
-          src={src}
+          src={resolvedSrc}
           alt={alt || ''}
           className="max-w-full rounded-lg border border-border my-2 hover:opacity-90 transition-opacity cursor-pointer"
           loading="lazy"
@@ -107,7 +113,33 @@ const components: Components = {
   },
 }
 
+const IMAGE_EXTS = 'png|jpg|jpeg|gif|webp|svg|bmp'
+
+function preprocessImagePaths(content: string): string {
+  // First: convert [Image: source: /path/to/file.png] patterns
+  content = content.replace(
+    new RegExp(`\\[(?:Image|image)[^\\]]*?(?:source:\\s*)?((~\\/|/(?:home|tmp)/)[^\\]]+\\.(?:${IMAGE_EXTS}))\\]`, 'gi'),
+    (_match, filePath) => {
+      const abs = filePath.replace(/^~\//, '/home/jb/')
+      return `![image](/local-file?path=${encodeURIComponent(abs)})`
+    }
+  )
+
+  // Then: convert bare file paths (not already inside markdown image syntax)
+  content = content.replace(
+    new RegExp(`(!\\[[^\\]]*\\]\\([^)]*\\))|(?:(?<=\\s|^|\`)((~\\/|/(?:home|tmp)/)[^\\s\`"'<>]+\\.(?:${IMAGE_EXTS}))(?=\\s|$|\`|[.,;:!?)]|$))`, 'gi'),
+    (match, existingImg, filePath) => {
+      if (existingImg) return existingImg
+      const abs = filePath.replace(/^~\//, '/home/jb/')
+      return `![image](/local-file?path=${encodeURIComponent(abs)})`
+    }
+  )
+
+  return content
+}
+
 export function MarkdownRenderer({ content }: { content: string }) {
+  const processed = preprocessImagePaths(content)
   return (
     <div className="markdown-body prose prose-invert prose-sm max-w-none">
       <Markdown
@@ -115,7 +147,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
         rehypePlugins={rehypePlugins}
         components={components}
       >
-        {content}
+        {processed}
       </Markdown>
     </div>
   )
