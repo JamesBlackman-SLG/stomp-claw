@@ -1,131 +1,160 @@
 # StompClaw
 
-A voice assistant daemon triggered by a MIDI foot pedal. Hold the pedal to record speech, release to get an LLM response.
+A voice assistant triggered by a MIDI foot pedal with a real-time web UI. Hold the pedal to record speech, release to get a streaming LLM response. Also supports typed input from the browser.
 
 ## Hardware
 
-- **MIDI Pedal**: Boss FS-1-WL (wireless MIDI foot switch)
+- **MIDI Pedal**: Boss FS-1-WL (wireless MIDI foot switch, CC 85)
 - **Audio**: Any PulseAudio-compatible microphone
 
 ## Architecture
 
 ```
-MIDI Foot Pedal (CC 85)
-        │
-        ▼
-┌───────────────────┐
-│  MIDI Listener    │ ──── Wait for pedal press/release
-└───────────────────┘
-        │
-        ▼ (while held)
-┌───────────────────┐
-│  Audio Capture    │ ──── 16kHz mono, cpal stream
-│  (partial trans)  │ ──── Thread sends to NeMo every 2s
-└───────────────────┘
-        │
-        ▼ (on release)
-┌───────────────────┐
-│  NeMo STT         │ ──── localhost:5051/transcribe/
-└───────────────────┘
-        │
-        ▼
-┌───────────────────┐
-│  OpenClaw API     │ ──── LLM response
-└───────────────────┘
-        │
-        ▼
-┌───────────────────┐
-│  Output           │ ──── Live file + TTS (optional)
-└───────────────────┘
+┌─────────────────┐
+│ MIDI Pedal      │ CC 85 press/release
+│ (FS-1-WL)       │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│ Audio Capture (cpal)    │ 16kHz mono f32
+│ + partial transcription │ live updates every 300ms
+└────────┬────────────────┘
+         │ on release
+         ▼
+┌─────────────────────────┐
+│ NeMo STT                │ localhost:5051/transcribe/
+└────────┬────────────────┘
+         │
+    ┌────┴────────────────┐
+    │                     │
+    ▼                     ▼
+ Voice Command       LLM Query
+ (session mgmt,      (OpenClaw streaming)
+  voice toggle,
+  help, etc.)
+    │                     │
+    └─────────┬───────────┘
+              │ events
+              ▼
+┌──────────────────────────┐     ┌───────────────────┐
+│ Axum Server (8765)       │◄───►│ React Web UI      │
+│ WebSocket + embedded SPA │     │ (embedded assets)  │
+└──────────────────────────┘     └───────────────────┘
+              │
+              ▼
+┌──────────────────────────┐
+│ SQLite DB                │ sessions, turns, config
+│ (~/.stomp-claw/)         │
+└──────────────────────────┘
 ```
+
+The backend is a Rust daemon with modular event-driven architecture. All modules communicate via a broadcast event bus. The React frontend is compiled and embedded into the Rust binary via `rust_embed`, so the single binary serves everything.
 
 ## Build & Run
 
+Requires Rust 2024 edition and Node.js (for the frontend build).
+
 ```bash
-# Build
+# Full build (frontend + Rust)
+./build-release.sh
+
+# Or separately:
+cd ui && npm run build && cd ..
 cargo build --release
 
-# Start the daemon
-./start.sh
-
-# Stop the daemon
-./stop.sh
+# Start/stop the daemon
+./start.sh          # kills existing, launches in background
+./stop.sh           # stops the daemon
 
 # View logs
-./tail-log.sh
+./tail-log.sh       # tail -f ~/.stomp-claw/stomp-claw.log
 ```
 
-## Viewer
+Access the web UI at **http://127.0.0.1:8765**
 
-The viewer is a separate binary that serves a web page displaying the live conversation:
+## Web UI
 
-```bash
-# Start viewer (in separate terminal)
-cargo run --release --bin stomp-claw-viewer
+The React frontend provides:
 
-# Or use the script
-./start-viewer.sh
-```
+- **Session sidebar** — create, rename, delete, and switch between conversations
+- **Chat view** — messages with streaming LLM responses and auto-scroll
+- **Rich markdown** — syntax-highlighted code blocks with copy button, GFM tables, KaTeX math
+- **Status bar** — recording indicator, live partial transcript, thinking state, voice toggle
+- **Text input** — type messages directly (Enter to send, Shift+Enter for newlines)
+- **Help modal** — voice command reference
 
-Access at http://localhost:8765
+Built with React 19, Tailwind CSS v4, and WebSocket for real-time updates.
 
-## Files & Paths
+## Voice Commands
 
-| File | Purpose |
-|------|---------|
-| `/tmp/stomp-claw.log` | Daemon log |
-| `/tmp/stomp-claw-live.md` | Live status for viewer |
-| `/tmp/stomp-claw-conversation.md` | Conversation history |
-| `/tmp/stomp-claw-session.txt` | OpenClaw session ID |
-| `~/.config/stomp-claw/config.toml` | Persistent config |
+Say these while using the pedal:
 
-## Configuration
+| Command | Action |
+|---------|--------|
+| "new session" / "fresh start" | Create a new conversation |
+| "list sessions" | List available sessions |
+| "switch to [name]" | Switch session (fuzzy matched) |
+| "rename session [name]" | Rename current session |
+| "delete session" | Delete current session |
+| "voice on" / "voice off" | Toggle TTS |
+| "help" / "commands" | Show help modal |
+| "never mind" / "scratch that" | Cancel current recording |
 
-Edit `~/.config/stomp-claw/config.toml`:
+## Voice Mode
 
-```toml
-voice_enabled = true  # Set to false to disable TTS
-```
-
-Voice can also be toggled by saying "voice on" or "voice off" during a conversation.
+When **enabled**: responses truncated to 2 sentences (150 tokens) and spoken via TTS.
+When **disabled**: full responses up to 2000 tokens, text only.
 
 ## External Services
 
-- **NeMo** (localhost:5051) — Speech-to-text
-- **OpenClaw** (localhost:18789) — LLM API
-- **paplay** — PulseAudio sound playback for beeps
-- **~/bin/speak** — TTS command
+| Service | Address | Purpose |
+|---------|---------|---------|
+| NeMo | `localhost:5051` | Speech-to-text (multipart WAV upload) |
+| OpenClaw | `127.0.0.1:18789` | OpenAI-compatible streaming LLM API |
+| paplay | PulseAudio | Audio feedback (beeps) |
+| ~/bin/speak | Custom binary | Text-to-speech output |
 
 ## Project Structure
 
 ```
 stomp-claw/
 ├── src/
-│   ├── main.rs       # Main daemon (MIDI, audio, processing)
-│   └── viewer.rs    # Web viewer server
-├── start.sh          # Start daemon
-├── stop.sh           # Stop daemon
-├── start-viewer.sh   # Start viewer
-├── tail-log.sh       # Tail logs
+│   ├── main.rs            # Entry point, module orchestration
+│   ├── midi.rs            # MIDI pedal listener (CC 85)
+│   ├── audio.rs           # Audio capture + partial transcription
+│   ├── transcription.rs   # Final speech-to-text via NeMo
+│   ├── llm.rs             # Streaming LLM requests to OpenClaw
+│   ├── commands.rs        # Voice command parsing, session naming
+│   ├── server.rs          # Axum web server, WebSocket handler
+│   ├── db.rs              # SQLite schema, CRUD, v1 migration
+│   ├── events.rs          # Event bus types (25+ event variants)
+│   ├── beep.rs            # Audio feedback and TTS
+│   └── config.rs          # Constants (URLs, ports, prompts)
+├── ui/
+│   ├── app/
+│   │   ├── components/    # React components (ChatView, TextInput, etc.)
+│   │   ├── lib/           # State management, WebSocket client, types
+│   │   ├── routes/        # TanStack Router pages
+│   │   └── styles/        # Tailwind CSS
+│   ├── index.html
+│   ├── package.json
+│   └── vite.config.ts
+├── build-release.sh       # Full build (frontend + Rust)
+├── start.sh               # Start daemon
+├── stop.sh                # Stop daemon
+├── tail-log.sh            # Tail logs
+├── beep-*.wav             # Audio feedback samples
 └── Cargo.toml
 ```
 
-## Dependencies
+## Data Storage
 
-- Rust 2024 edition
-- midir (MIDI input)
-- cpal (audio capture)
-- hound (WAV writing)
-- reqwest (HTTP client)
-- rouille (HTTP server for viewer)
-- notify (file watching)
+All state lives in `~/.stomp-claw/`:
 
-## Voice Mode
+| File | Purpose |
+|------|---------|
+| `stomp-claw.db` | SQLite database (sessions, turns, config) |
+| `stomp-claw.log` | Daemon log |
 
-When voice is **enabled**:
-- Responses truncated to 2 sentences, max 150 tokens
-- Spoken via TTS
-
-When voice is **disabled**:
-- Full responses up to 2000 tokens
-- Text only
+The database stores sessions, conversation turns (with streaming status tracking), and key-value config. Automatic migration from v1 JSON files runs on first startup if legacy data is found.
