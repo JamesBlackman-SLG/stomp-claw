@@ -61,7 +61,7 @@ pub enum Event {
     ShowHelp,
 
     // UI-originated
-    UserTextMessage { session_id: String, text: String },
+    UserTextMessage { session_id: String, text: String, images: Vec<String> },
 }
 
 pub type EventSender = broadcast::Sender<Event>;

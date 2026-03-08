@@ -236,7 +236,7 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver, pool: SqlitePool) {
 
                 busy_sessions.remove(&session_id);
             }
-            Ok(Event::UserTextMessage { session_id, text }) => {
+            Ok(Event::UserTextMessage { session_id, text, images }) => {
                 if busy_sessions.contains(&session_id) {
                     let _ = tx.send(Event::LlmError {
                         session_id: session_id.clone(),

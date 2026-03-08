@@ -54,7 +54,7 @@ enum WsOutgoing {
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 enum WsIncoming {
-    SendMessage { session_id: String, text: String },
+    SendMessage { session_id: String, text: String, #[serde(default)] images: Vec<String> },
     SwitchSession { session_id: String },
     CreateSession,
     RenameSession { session_id: String, name: String },
@@ -326,10 +326,53 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
     forward_handle.abort();
 }
 
+fn save_base64_image(data_url: &str, dir: &std::path::Path) -> Option<String> {
+    let parts: Vec<&str> = data_url.splitn(2, ',').collect();
+    if parts.len() != 2 { return None; }
+
+    let header = parts[0];
+    let b64_data = parts[1];
+
+    let ext = if header.contains("image/png") { "png" }
+        else if header.contains("image/jpeg") { "jpg" }
+        else if header.contains("image/gif") { "gif" }
+        else if header.contains("image/webp") { "webp" }
+        else { "png" };
+
+    use base64::Engine;
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(b64_data) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!("Failed to decode base64 image: {}", e);
+            return None;
+        }
+    };
+
+    let filename = format!("{}.{}", uuid::Uuid::new_v4(), ext);
+    let path = dir.join(&filename);
+    match std::fs::write(&path, &bytes) {
+        Ok(_) => Some(path.to_string_lossy().to_string()),
+        Err(e) => {
+            tracing::error!("Failed to write image: {}", e);
+            None
+        }
+    }
+}
+
 async fn handle_ws_message(msg: WsIncoming, tx: &EventSender, pool: &SqlitePool) {
     match msg {
-        WsIncoming::SendMessage { session_id, text } => {
-            let _ = tx.send(Event::UserTextMessage { session_id, text });
+        WsIncoming::SendMessage { session_id, text, images } => {
+            let mut image_paths: Vec<String> = Vec::new();
+            if !images.is_empty() {
+                let images_dir = app_config::base_dir().join("images");
+                let _ = std::fs::create_dir_all(&images_dir);
+                for data_url in &images {
+                    if let Some(saved) = save_base64_image(data_url, &images_dir) {
+                        image_paths.push(saved);
+                    }
+                }
+            }
+            let _ = tx.send(Event::UserTextMessage { session_id, text, images: image_paths });
         }
         WsIncoming::SwitchSession { session_id } => {
             let _ = db::set_active_session_id(pool, &session_id).await;
