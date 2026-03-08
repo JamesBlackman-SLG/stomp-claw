@@ -29,9 +29,13 @@ async fn send_to_llm(
     session_id: &str,
     user_message: &str,
     voice_enabled: bool,
+    images: &[String],
 ) {
     // Create user turn in DB
-    let _user_turn_id = match db::create_turn(pool, session_id, "user", user_message, "complete").await {
+    let images_json = if images.is_empty() { None } else {
+        Some(serde_json::to_string(images).unwrap_or_default())
+    };
+    let _user_turn_id = match db::create_turn_with_images(pool, session_id, "user", user_message, "complete", images_json.as_deref()).await {
         Ok(id) => id,
         Err(e) => {
             tracing::error!("Failed to create user turn: {}", e);
@@ -59,10 +63,35 @@ async fn send_to_llm(
         (config::TEXT_SYSTEM_PROMPT, config::TEXT_MAX_TOKENS)
     };
 
+    let user_content = if images.is_empty() {
+        serde_json::json!(user_message)
+    } else {
+        use base64::Engine;
+        let mut parts = vec![serde_json::json!({"type": "text", "text": user_message})];
+        for img_path in images {
+            if let Ok(bytes) = tokio::fs::read(img_path).await {
+                let ext = std::path::Path::new(img_path)
+                    .extension().and_then(|e| e.to_str()).unwrap_or("png");
+                let mime = match ext {
+                    "jpg" | "jpeg" => "image/jpeg",
+                    "gif" => "image/gif",
+                    "webp" => "image/webp",
+                    _ => "image/png",
+                };
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                parts.push(serde_json::json!({
+                    "type": "image_url",
+                    "image_url": {"url": format!("data:{};base64,{}", mime, b64)}
+                }));
+            }
+        }
+        serde_json::json!(parts)
+    };
+
     let payload = serde_json::json!({
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
+            {"role": "user", "content": user_content}
         ],
         "stream": true,
         "max_tokens": max_tokens,
@@ -232,7 +261,7 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver, pool: SqlitePool) {
                 busy_sessions.insert(session_id.clone());
                 let _ = db::touch_session(&pool, &session_id).await;
 
-                send_to_llm(&tx, &pool, &client, &session_id, &text, voice_enabled).await;
+                send_to_llm(&tx, &pool, &client, &session_id, &text, voice_enabled, &[]).await;
 
                 busy_sessions.remove(&session_id);
             }
@@ -249,7 +278,7 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver, pool: SqlitePool) {
                 busy_sessions.insert(session_id.clone());
                 let _ = db::touch_session(&pool, &session_id).await;
 
-                send_to_llm(&tx, &pool, &client, &session_id, &text, voice_enabled).await;
+                send_to_llm(&tx, &pool, &client, &session_id, &text, voice_enabled, &images).await;
 
                 busy_sessions.remove(&session_id);
             }
