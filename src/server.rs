@@ -4,6 +4,7 @@ use axum::{
         State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
+    http::HeaderMap,
     response::{IntoResponse, Response},
     routing::get,
     Json,
@@ -149,9 +150,19 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
 // --- WebSocket handler ---
 
 async fn ws_handler(
+    headers: HeaderMap,
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
 ) -> Response {
+    // Validate Origin to prevent cross-site WebSocket hijacking
+    if let Some(origin) = headers.get("origin").and_then(|v| v.to_str().ok()) {
+        let allowed = origin.starts_with("http://127.0.0.1:")
+            || origin.starts_with("http://localhost:");
+        if !allowed {
+            tracing::warn!("Rejected WebSocket from origin: {}", origin);
+            return (axum::http::StatusCode::FORBIDDEN, "Forbidden").into_response();
+        }
+    }
     ws.on_upgrade(move |socket| handle_ws(socket, state))
 }
 

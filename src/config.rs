@@ -3,7 +3,10 @@ use std::path::PathBuf;
 // External service endpoints
 pub const NEMO_URL: &str = "http://localhost:5051";
 pub const OPENCLAW_URL: &str = "http://127.0.0.1:18789/v1/chat/completions";
-pub const OPENCLAW_TOKEN: &str = "06b21a7fafad855670f81018f3a455edccaf5dedc470fa0b";
+
+pub fn openclaw_token() -> String {
+    std::env::var("OPENCLAW_TOKEN").expect("OPENCLAW_TOKEN env var must be set")
+}
 
 // Audio
 pub const TARGET_SAMPLE_RATE: u32 = 16000;

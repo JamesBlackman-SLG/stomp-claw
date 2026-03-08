@@ -70,7 +70,7 @@ async fn send_to_llm(
     });
 
     let resp = match client.post(config::OPENCLAW_URL)
-        .header("Authorization", format!("Bearer {}", config::OPENCLAW_TOKEN))
+        .header("Authorization", format!("Bearer {}", config::openclaw_token()))
         .header("Content-Type", "application/json")
         .header("x-openclaw-session-key", session_id)
         .json(&payload)
