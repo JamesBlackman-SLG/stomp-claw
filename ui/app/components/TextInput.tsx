@@ -1,10 +1,11 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useAppState, useWs } from '../lib/state'
 
 export function TextInput() {
   const [text, setText] = useState('')
   const { activeSessionId, thinking, streamingTurnId } = useAppState()
   const ws = useWs()
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const busy = thinking || streamingTurnId !== null
 
@@ -15,20 +16,35 @@ export function TextInput() {
     setText('')
   }, [text, activeSessionId, busy, ws])
 
+  // Auto-resize textarea to fit content
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+  }, [text])
+
   return (
     <div className="border-t border-border px-4 py-3 flex gap-2">
-      <input
-        className="flex-1 bg-surface border border-border rounded px-3 py-2 text-sm text-text outline-none focus:border-accent placeholder:text-text-dim"
+      <textarea
+        ref={textareaRef}
+        className="flex-1 bg-surface border border-border rounded px-3 py-2 text-sm text-text outline-none focus:border-accent placeholder:text-text-dim resize-none"
         placeholder={busy ? 'Waiting for response...' : 'Type a message...'}
         value={text}
+        rows={1}
         onChange={e => setText(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+        onKeyDown={e => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault()
+            send()
+          }
+        }}
         disabled={busy}
       />
       <button
         onClick={send}
         disabled={busy || !text.trim()}
-        className="px-4 py-2 bg-accent/20 text-accent border border-accent/30 rounded text-sm font-medium hover:bg-accent/30 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        className="px-4 py-2 bg-accent/20 text-accent border border-accent/30 rounded text-sm font-medium hover:bg-accent/30 disabled:opacity-30 disabled:cursor-not-allowed transition-colors self-end"
       >
         Send
       </button>

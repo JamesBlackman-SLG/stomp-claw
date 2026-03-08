@@ -9,6 +9,15 @@ import type { Components } from 'react-markdown'
 const remarkPlugins = [remarkGfm, remarkMath]
 const rehypePlugins = [rehypeHighlight, rehypeKatex]
 
+function extractTextContent(node: any): string {
+  if (typeof node === 'string') return node
+  if (typeof node === 'number') return String(node)
+  if (!node) return ''
+  if (Array.isArray(node)) return node.map(extractTextContent).join('')
+  if (node.props?.children) return extractTextContent(node.props.children)
+  return ''
+}
+
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
 
@@ -31,18 +40,7 @@ function CopyButton({ text }: { text: string }) {
 
 const components: Components = {
   pre({ children, ...props }) {
-    // Extract text content from code children for copy button
-    let codeText = ''
-    if (children && typeof children === 'object' && 'props' in (children as any)) {
-      const codeProps = (children as any).props
-      if (typeof codeProps.children === 'string') {
-        codeText = codeProps.children
-      } else if (Array.isArray(codeProps.children)) {
-        codeText = codeProps.children
-          .map((c: any) => (typeof c === 'string' ? c : ''))
-          .join('')
-      }
-    }
+    const codeText = extractTextContent(children)
 
     return (
       <div className="relative group">
