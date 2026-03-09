@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" width="256" alt="StompClaw Logo" />
+</p>
+
 # StompClaw
 
 A voice assistant triggered by a MIDI foot pedal with a real-time web UI. Hold the pedal to record speech, release to get a streaming LLM response. Also supports typed input from the browser.
