@@ -21,6 +21,11 @@ tokio = { version = "1", features = ["full"] }
 # Web server
 axum = { version = "0.8", features = ["ws"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2"
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1", "http2"] }
+hyper = { version = "1", features = ["server"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "cors"] }
 

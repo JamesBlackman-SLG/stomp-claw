@@ -13,7 +13,7 @@ export function MessageBubble({ turn }: { turn: Turn }) {
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div className={`max-w-[80%] px-4 py-2.5 rounded-lg text-sm leading-relaxed ${
+      <div className={`max-w-[95%] sm:max-w-[80%] px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg text-sm leading-relaxed ${
         isUser
           ? 'bg-user-bg border border-border text-text'
           : 'bg-surface border border-border text-text'

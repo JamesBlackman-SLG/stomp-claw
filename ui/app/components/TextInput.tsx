@@ -39,13 +39,16 @@ export function TextInput() {
   const [text, setText] = useState('')
   const [images, setImages] = useState<PendingImage[]>([])
   const [dragOver, setDragOver] = useState(false)
-  const { activeSessionId, thinking, streamingTurnId } = useAppState()
+  const { activeSessionId, thinking, streamingTurnId, recording, partialTranscript } = useAppState()
   const ws = useWs()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const busy = thinking || streamingTurnId !== null
   const hasContent = text.trim().length > 0 || images.length > 0
+
+  // When recording, show partial transcript in the textarea area
+  const displayText = recording ? (partialTranscript || '') : text
 
   const addImages = useCallback((files: File[]) => {
     const imageFiles = files.filter(isImageFile)
@@ -111,11 +114,11 @@ export function TextInput() {
     if (!el) return
     el.style.height = 'auto'
     el.style.height = Math.min(el.scrollHeight, 200) + 'px'
-  }, [text])
+  }, [displayText])
 
   return (
     <div
-      className={`border-t border-border px-4 py-3 ${dragOver ? 'bg-accent/10' : ''}`}
+      className={`border-t border-border px-2 sm:px-4 py-2 sm:py-3 ${dragOver ? 'bg-accent/10' : ''}`}
       onDrop={handleDrop}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -139,6 +142,21 @@ export function TextInput() {
           ))}
         </div>
       )}
+      {recording && (
+        <div className="flex items-center gap-2 mb-2 text-xs">
+          <span className="recording-pulse text-recording font-bold">REC</span>
+          <button
+            onClick={() => {
+              setText('')
+              ws?.send({ type: 'cancel_recording' })
+            }}
+            className="text-text-dim hover:text-error transition-colors ml-auto"
+            title="Cancel and reset transcription"
+          >
+            &times; cancel
+          </button>
+        </div>
+      )}
       <div className="flex gap-2">
         <input
           ref={fileInputRef}
@@ -153,7 +171,7 @@ export function TextInput() {
         />
         <button
           onClick={() => fileInputRef.current?.click()}
-          disabled={busy}
+          disabled={busy || recording}
           className="px-2 py-2 text-text-dim hover:text-text transition-colors disabled:opacity-30"
           title="Attach image"
         >
@@ -165,11 +183,11 @@ export function TextInput() {
         </button>
         <textarea
           ref={textareaRef}
-          className="flex-1 bg-surface border border-border rounded px-3 py-2 text-sm text-text outline-none focus:border-accent placeholder:text-text-dim resize-none"
-          placeholder={busy ? 'Waiting for response...' : 'Type a message...'}
-          value={text}
+          className={`flex-1 bg-surface border rounded px-3 py-2 text-sm text-text outline-none placeholder:text-text-dim resize-none ${recording ? 'border-recording/50' : 'border-border focus:border-accent'}`}
+          placeholder={recording ? 'Listening...' : busy ? 'Waiting for response...' : 'Type a message...'}
+          value={displayText}
           rows={1}
-          onChange={e => setText(e.target.value)}
+          onChange={e => { if (!recording) setText(e.target.value) }}
           onKeyDown={e => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
@@ -178,14 +196,27 @@ export function TextInput() {
           }}
           onPaste={handlePaste}
           disabled={busy}
+          readOnly={recording}
         />
-        <button
-          onClick={send}
-          disabled={busy || !hasContent}
-          className="px-4 py-2 bg-accent/20 text-accent border border-accent/30 rounded text-sm font-medium hover:bg-accent/30 disabled:opacity-30 disabled:cursor-not-allowed transition-colors self-end"
-        >
-          Send
-        </button>
+        {recording ? (
+          <button
+            onClick={() => {
+              setText(partialTranscript || '')
+              ws?.send({ type: 'cancel_recording' })
+            }}
+            className="px-3 sm:px-4 py-2 bg-recording/20 text-recording border border-recording/30 rounded text-sm font-medium hover:bg-recording/30 transition-colors self-end shrink-0"
+          >
+            Edit
+          </button>
+        ) : (
+          <button
+            onClick={send}
+            disabled={busy || !hasContent}
+            className="px-3 sm:px-4 py-2 bg-accent/20 text-accent border border-accent/30 rounded text-sm font-medium hover:bg-accent/30 disabled:opacity-30 disabled:cursor-not-allowed transition-colors self-end shrink-0"
+          >
+            Send
+          </button>
+        )}
       </div>
     </div>
   )

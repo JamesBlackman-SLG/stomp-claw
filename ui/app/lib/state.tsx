@@ -14,12 +14,14 @@ interface AppState {
   connected: boolean
   thinking: boolean
   showHelp: boolean
+  sidebarOpen: boolean
 }
 
 type Action =
   | { type: 'ws_message'; msg: WsMessage }
   | { type: 'set_connected'; connected: boolean }
   | { type: 'set_show_help'; show: boolean }
+  | { type: 'set_sidebar_open'; open: boolean }
 
 const initialState: AppState = {
   sessions: [],
@@ -33,12 +35,16 @@ const initialState: AppState = {
   connected: false,
   thinking: false,
   showHelp: false,
+  sidebarOpen: false,
 }
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'set_show_help':
       return { ...state, showHelp: action.show }
+
+    case 'set_sidebar_open':
+      return { ...state, sidebarOpen: action.open }
 
     case 'set_connected':
       if (action.connected) {
@@ -55,7 +61,7 @@ function reducer(state: AppState, action: Action): AppState {
         case 'session_list':
           return { ...state, sessions: msg.sessions }
         case 'session_switched':
-          return { ...state, activeSessionId: msg.session_id, turns: new Map(), recording: false, partialTranscript: '', thinking: false, streamingTurnId: null, streamingContent: '' }
+          return { ...state, activeSessionId: msg.session_id, turns: new Map(), recording: false, partialTranscript: '', thinking: false, streamingTurnId: null, streamingContent: '', sidebarOpen: false }
         case 'session_created':
           return { ...state, sessions: [...state.sessions, msg.session] }
         case 'session_renamed':

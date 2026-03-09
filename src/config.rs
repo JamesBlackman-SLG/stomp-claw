@@ -17,6 +17,7 @@ pub const PEDAL_CC: u8 = 85;
 
 // Server
 pub const SERVER_ADDR: &str = "0.0.0.0:8765";
+pub const TLS_ADDR: &str = "0.0.0.0:8766";
 
 // System prompts
 pub const VOICE_SYSTEM_PROMPT: &str = "You are talking to James via voice-only (foot pedal + TTS). Keep responses very short - 1-2 sentences max. Be direct and conversational. No long explanations.";

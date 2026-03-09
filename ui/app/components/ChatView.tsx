@@ -15,7 +15,7 @@ export function ChatView() {
   }, [sessionTurns.length, streamingContent, thinking])
 
   return (
-    <div ref={containerRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+    <div ref={containerRef} className="flex-1 overflow-y-auto px-2 sm:px-4 py-3 sm:py-4 space-y-2 sm:space-y-3">
       {sessionTurns.length === 0 && !thinking && !streamingTurnId && (
         <div className="flex items-center justify-center h-full text-text-dim text-sm">
           Hold the pedal to speak, or type below.

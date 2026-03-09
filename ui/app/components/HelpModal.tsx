@@ -16,7 +16,7 @@ export function HelpModal({ onClose }: HelpModalProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={onClose}>
       <div
-        className="bg-bg border border-border rounded-lg max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto p-6"
+        className="bg-bg border border-border rounded-lg max-w-2xl w-full mx-3 sm:mx-4 max-h-[85vh] overflow-y-auto p-4 sm:p-6"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">

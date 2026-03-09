@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { useAppState, useWs } from '../lib/state'
+import { useAppState, useWs, useDispatch } from '../lib/state'
 
 export function SessionSidebar() {
-  const { sessions, activeSessionId } = useAppState()
+  const { sessions, activeSessionId, sidebarOpen } = useAppState()
   const ws = useWs()
+  const dispatch = useDispatch()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
 
@@ -19,17 +20,28 @@ export function SessionSidebar() {
     setEditingId(null)
   }
 
-  return (
-    <aside className="w-56 border-r border-border flex flex-col bg-surface">
+  const closeSidebar = () => dispatch({ type: 'set_sidebar_open', open: false })
+
+  const sidebarContent = (
+    <aside className={`w-56 border-r border-border flex flex-col bg-surface h-full`}>
       <div className="flex items-center justify-between px-3 py-2 border-b border-border">
         <span className="text-xs text-text-dim uppercase tracking-wider">Sessions</span>
-        <button
-          onClick={() => ws?.send({ type: 'create_session' })}
-          className="text-accent hover:text-accent-dim text-sm font-bold"
-          title="New session"
-        >
-          +
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => ws?.send({ type: 'create_session' })}
+            className="text-accent hover:text-accent-dim text-sm font-bold"
+            title="New session"
+          >
+            +
+          </button>
+          <button
+            onClick={closeSidebar}
+            className="text-text-dim hover:text-text text-sm md:hidden"
+            title="Close sidebar"
+          >
+            ✕
+          </button>
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto">
         {sessions.map(session => (
@@ -81,5 +93,24 @@ export function SessionSidebar() {
         ))}
       </div>
     </aside>
+  )
+
+  return (
+    <>
+      {/* Desktop: always visible */}
+      <div className="hidden md:flex">
+        {sidebarContent}
+      </div>
+
+      {/* Mobile: overlay when open */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-40 flex md:hidden">
+          <div className="flex-shrink-0">
+            {sidebarContent}
+          </div>
+          <div className="flex-1 bg-black/60" onClick={closeSidebar} />
+        </div>
+      )}
+    </>
   )
 }

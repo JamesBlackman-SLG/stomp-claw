@@ -131,22 +131,24 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver) {
                 });
             }
             Ok(Event::PedalUp) => {
-                recording.store(false, Ordering::Relaxed);
-                let captured = samples.lock().unwrap().clone();
-                if !captured.is_empty() {
-                    let _ = tx.send(Event::RecordingComplete {
-                        session_id: current_session_id.clone(),
-                        samples: captured,
-                    });
+                let was_recording = recording.swap(false, Ordering::Relaxed);
+                if was_recording {
+                    let captured = samples.lock().unwrap().clone();
+                    if !captured.is_empty() {
+                        let _ = tx.send(Event::RecordingComplete {
+                            session_id: current_session_id.clone(),
+                            samples: captured,
+                        });
+                    }
                 }
             }
             Ok(Event::CancelRecording) => {
                 if recording.load(Ordering::Relaxed) {
                     tracing::info!("Recording cancelled via UI");
+                    recording.store(false, Ordering::Relaxed);
                     samples.lock().unwrap().clear();
-                    let _ = tx.send(Event::PartialTranscript {
+                    let _ = tx.send(Event::RecordingCancelled {
                         session_id: current_session_id.clone(),
-                        text: String::new(),
                     });
                 }
             }
