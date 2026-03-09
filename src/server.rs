@@ -143,12 +143,104 @@ pub async fn run(tx: EventSender, _rx: EventReceiver, pool: SqlitePool) {
         .fallback(static_handler)
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(app_config::SERVER_ADDR)
-        .await
-        .expect("Failed to bind server");
+    // Check for TLS cert/key files (e.g. Tailscale HTTPS)
+    let (cert_path, key_path) = find_tls_files();
 
-    tracing::info!("Server listening on {}", app_config::SERVER_ADDR);
-    axum::serve(listener, app).await.expect("Server failed");
+    if let (Some(cert_path), Some(key_path)) = (cert_path, key_path) {
+        // Run both HTTP and HTTPS
+        let http_app = app.clone();
+        let tls_app = app;
+
+        let http_handle = tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::bind(app_config::SERVER_ADDR)
+                .await
+                .expect("Failed to bind HTTP server");
+            tracing::info!("HTTP server listening on {}", app_config::SERVER_ADDR);
+            axum::serve(listener, http_app).await.expect("HTTP server failed");
+        });
+
+        let tls_handle = tokio::spawn(async move {
+            use std::io::BufReader;
+            use tokio_rustls::TlsAcceptor;
+            use rustls_pemfile::{certs, pkcs8_private_keys};
+
+            let cert_file = std::fs::File::open(&cert_path).expect("Failed to open cert");
+            let key_file = std::fs::File::open(&key_path).expect("Failed to open key");
+
+            let certs: Vec<_> = certs(&mut BufReader::new(cert_file))
+                .collect::<Result<Vec<_>, _>>()
+                .expect("Failed to parse certs");
+
+            let key = {
+                // Try EC keys first, then PKCS8, then RSA
+                use rustls_pemfile::ec_private_keys;
+                let key_data = std::fs::read(&key_path).expect("Failed to read key file");
+
+                let mut reader = BufReader::new(&key_data[..]);
+                if let Some(Ok(k)) = ec_private_keys(&mut reader).next() {
+                    rustls::pki_types::PrivateKeyDer::Sec1(k)
+                } else {
+                    let mut reader = BufReader::new(&key_data[..]);
+                    if let Some(Ok(k)) = pkcs8_private_keys(&mut reader).next() {
+                        rustls::pki_types::PrivateKeyDer::Pkcs8(k)
+                    } else {
+                        panic!("No supported private key found in key file");
+                    }
+                }
+            };
+
+            let tls_config = rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(certs, key)
+                .expect("Failed to build TLS config");
+
+            let tls_acceptor = TlsAcceptor::from(std::sync::Arc::new(tls_config));
+            let tcp_listener = tokio::net::TcpListener::bind(app_config::TLS_ADDR)
+                .await
+                .expect("Failed to bind TLS server");
+
+            tracing::info!("HTTPS server listening on {}", app_config::TLS_ADDR);
+
+            loop {
+                let (tcp_stream, _addr) = match tcp_listener.accept().await {
+                    Ok(conn) => conn,
+                    Err(e) => { tracing::warn!("TCP accept error: {e}"); continue; }
+                };
+
+                let acceptor = tls_acceptor.clone();
+                let app = tls_app.clone();
+
+                tokio::spawn(async move {
+                    let tls_stream = match acceptor.accept(tcp_stream).await {
+                        Ok(s) => s,
+                        Err(e) => { tracing::debug!("TLS handshake failed: {e}"); return; }
+                    };
+
+                    let io = hyper_util::rt::TokioIo::new(tls_stream);
+                    let service = hyper_util::service::TowerToHyperService::new(app.into_service());
+
+                    if let Err(e) = hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new())
+                        .serve_connection_with_upgrades(io, service)
+                        .await
+                    {
+                        tracing::debug!("Connection error: {e}");
+                    }
+                });
+            }
+        });
+
+        tokio::select! {
+            r = http_handle => r.expect("HTTP task panicked"),
+            r = tls_handle => r.expect("HTTPS task panicked"),
+        }
+    } else {
+        // HTTP only
+        let listener = tokio::net::TcpListener::bind(app_config::SERVER_ADDR)
+            .await
+            .expect("Failed to bind server");
+        tracing::info!("Server listening on {}", app_config::SERVER_ADDR);
+        axum::serve(listener, app).await.expect("Server failed");
+    }
 }
 
 async fn get_sessions(State(state): State<AppState>) -> Json<Vec<db::Session>> {
@@ -192,7 +284,14 @@ async fn ws_handler(
             || origin.starts_with("http://192.168.")
             || origin.starts_with("http://10.")
             || origin.starts_with("http://100.")
-            || origin.starts_with("http://172.");
+            || origin.starts_with("http://172.")
+            || origin.starts_with("https://127.0.0.1:")
+            || origin.starts_with("https://localhost:")
+            || origin.starts_with("https://192.168.")
+            || origin.starts_with("https://10.")
+            || origin.starts_with("https://100.")
+            || origin.starts_with("https://172.")
+            || origin.contains(".ts.net");
         if !allowed {
             tracing::warn!("Rejected WebSocket from origin: {}", origin);
             return (axum::http::StatusCode::FORBIDDEN, "Forbidden").into_response();
@@ -471,4 +570,45 @@ async fn send_ws(
         tx.send(Message::Text(json.into())).await.map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Find TLS cert/key files. Checks TLS_CERT/TLS_KEY env vars first,
+/// then looks for any *.crt/*.key pair in the home directory.
+fn find_tls_files() -> (Option<std::path::PathBuf>, Option<std::path::PathBuf>) {
+    use std::path::PathBuf;
+
+    // Check environment variables first
+    if let (Ok(cert), Ok(key)) = (std::env::var("TLS_CERT"), std::env::var("TLS_KEY")) {
+        let cert = PathBuf::from(cert);
+        let key = PathBuf::from(key);
+        if cert.exists() && key.exists() {
+            return (Some(cert), Some(key));
+        }
+    }
+
+    // Fall back to scanning home dir for *.ts.net.crt / *.ts.net.key
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return (None, None),
+    };
+
+    let Ok(entries) = std::fs::read_dir(&home) else {
+        return (None, None);
+    };
+
+    let mut cert = None;
+    let mut key = None;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.ends_with(".ts.net.crt") {
+            cert = Some(entry.path());
+        } else if name.ends_with(".ts.net.key") {
+            key = Some(entry.path());
+        }
+        if cert.is_some() && key.is_some() {
+            break;
+        }
+    }
+    (cert, key)
 }
