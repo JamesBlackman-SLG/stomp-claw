@@ -220,7 +220,6 @@ async fn send_to_llm(
     let mut stream = resp.bytes_stream();
     let mut buffer = String::new();
     let mut stream_done = false;
-    let mut first_token = true;
     let mut token_count = 0u32;
     let mut last_db_update = std::time::Instant::now();
 
@@ -272,7 +271,6 @@ async fn send_to_llm(
                     if evt.event_type == "response.output_text.delta" {
                         if let Some(delta) = &evt.delta {
                             full_reply.push_str(delta);
-                            first_token = false;
                             token_count += 1;
 
                             let _ = tx.send(Event::LlmToken {

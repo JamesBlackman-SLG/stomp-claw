@@ -198,18 +198,6 @@ pub async fn create_turn(pool: &SqlitePool, session_id: &str, role: &str, conten
     Ok(result.last_insert_rowid())
 }
 
-pub async fn create_turn_with_images(pool: &SqlitePool, session_id: &str, role: &str, content: &str, status: &str, images: Option<&str>) -> Result<i64, sqlx::Error> {
-    let now = chrono::Utc::now().to_rfc3339();
-    let result = sqlx::query("INSERT INTO turns (session_id, role, content, status, created_at, images) VALUES (?, ?, ?, ?, ?, ?)")
-        .bind(session_id)
-        .bind(role)
-        .bind(content)
-        .bind(status)
-        .bind(&now)
-        .bind(images)
-        .execute(pool).await?;
-    Ok(result.last_insert_rowid())
-}
 
 pub async fn create_turn_with_attachments(
     pool: &SqlitePool, session_id: &str, role: &str, content: &str, status: &str,
