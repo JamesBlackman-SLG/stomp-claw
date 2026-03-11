@@ -126,43 +126,7 @@ async fn send_to_llm(
         }
     }
 
-    // Include documents from prior turns in this session
-    if let Ok(prior_doc_jsons) = db::get_session_documents(pool, session_id).await {
-        use base64::Engine;
-        let mut total_size: usize = 0;
-        for doc_json in &prior_doc_jsons {
-            if let Ok(docs) = serde_json::from_str::<Vec<serde_json::Value>>(doc_json) {
-                for doc in &docs {
-                    let path = doc["path"].as_str().unwrap_or("");
-                    let filename = doc["filename"].as_str().unwrap_or("document");
-                    if documents.iter().any(|(p, _)| p == path) { continue; }
-                    if let Ok(bytes) = tokio::fs::read(path).await {
-                        total_size += bytes.len();
-                        if total_size > 20 * 1024 * 1024 {
-                            tracing::warn!("Session document context exceeds 20MB, skipping remaining");
-                            break;
-                        }
-                        let ext = std::path::Path::new(path)
-                            .extension().and_then(|e| e.to_str()).unwrap_or("txt");
-                        let media_type = match ext {
-                            "pdf" => "application/pdf",
-                            "csv" => "text/csv",
-                            "json" => "application/json",
-                            "html" => "text/html",
-                            "md" => "text/markdown",
-                            _ => "text/plain",
-                        };
-                        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                        user_parts.push(serde_json::json!({
-                            "type": "input_file",
-                            "source": { "type": "base64", "media_type": media_type, "data": b64, "filename": filename }
-                        }));
-                    }
-                }
-            }
-            if total_size > 20 * 1024 * 1024 { break; }
-        }
-    }
+
 
     // Build Responses API payload
     let payload = serde_json::json!({

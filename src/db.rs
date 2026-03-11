@@ -211,11 +211,6 @@ pub async fn create_turn_with_attachments(
     Ok(result.last_insert_rowid())
 }
 
-pub async fn get_session_documents(pool: &SqlitePool, session_id: &str) -> Result<Vec<String>, sqlx::Error> {
-    let rows = sqlx::query("SELECT documents FROM turns WHERE session_id = ? AND role = 'user' AND documents IS NOT NULL ORDER BY id")
-        .bind(session_id).fetch_all(pool).await?;
-    Ok(rows.iter().map(|r| r.get::<String, _>("documents")).collect())
-}
 
 pub async fn update_turn_content(pool: &SqlitePool, turn_id: i64, content: &str) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE turns SET content = ? WHERE id = ?")
