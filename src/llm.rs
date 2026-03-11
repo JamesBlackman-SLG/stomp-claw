@@ -156,7 +156,9 @@ async fn send_to_llm(
     loop {
         if stream_done { break; }
 
-        let timeout_secs = if first_token { 120 } else { 10 };
+        // Generous timeout: OpenClaw may pause between text tokens while
+        // executing tool calls. Stream ends via response.completed / [DONE].
+        let timeout_secs = 120;
         let chunk = match tokio::time::timeout(
             std::time::Duration::from_secs(timeout_secs),
             stream.next()
