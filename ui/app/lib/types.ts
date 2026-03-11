@@ -14,6 +14,7 @@ export interface Turn {
   created_at: string
   completed_at: string | null
   images: string[] | null
+  documents: string | null
 }
 
 // Server -> Client messages
@@ -38,7 +39,7 @@ export type WsMessage =
 
 // Client -> Server messages
 export type WsCommand =
-  | { type: 'send_message'; session_id: string; text: string; images?: string[] }
+  | { type: 'send_message'; session_id: string; text: string; images?: string[]; documents?: Array<{data: string; filename: string}> }
   | { type: 'switch_session'; session_id: string }
   | { type: 'create_session' }
   | { type: 'rename_session'; session_id: string; name: string }

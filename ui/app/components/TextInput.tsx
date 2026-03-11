@@ -6,6 +6,38 @@ interface PendingImage {
   preview: string
 }
 
+interface PendingDocument {
+  file: File
+  filename: string
+}
+
+const DOCUMENT_TYPES = [
+  'application/pdf',
+  'text/csv',
+  'text/plain',
+  'application/json',
+  'text/html',
+  'text/markdown',
+]
+
+const DOCUMENT_EXTENSIONS = ['.pdf', '.csv', '.txt', '.json', '.html', '.md']
+
+const MAX_DOC_SIZE = 5 * 1024 * 1024 // 5MB
+
+function isDocumentFile(file: File): boolean {
+  if (DOCUMENT_TYPES.includes(file.type)) return true
+  return DOCUMENT_EXTENSIONS.some(ext => file.name.toLowerCase().endsWith(ext))
+}
+
+function fileToBase64DataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
 const MAX_IMAGE_DIM = 1024
 
 function resizeAndEncode(file: File): Promise<string> {
@@ -38,6 +70,7 @@ function isImageFile(file: File): boolean {
 export function TextInput() {
   const [text, setText] = useState('')
   const [images, setImages] = useState<PendingImage[]>([])
+  const [documents, setDocuments] = useState<PendingDocument[]>([])
   const [dragOver, setDragOver] = useState(false)
   const { activeSessionId, thinking, streamingTurnId, recording, partialTranscript } = useAppState()
   const ws = useWs()
@@ -45,19 +78,38 @@ export function TextInput() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const busy = thinking || streamingTurnId !== null
-  const hasContent = text.trim().length > 0 || images.length > 0
+  const hasContent = text.trim().length > 0 || images.length > 0 || documents.length > 0
 
   // When recording, show partial transcript in the textarea area
   const displayText = recording ? (partialTranscript || '') : text
 
-  const addImages = useCallback((files: File[]) => {
-    const imageFiles = files.filter(isImageFile)
-    const newImages = imageFiles.map(file => ({
-      file,
-      preview: URL.createObjectURL(file),
-    }))
-    setImages(prev => [...prev, ...newImages])
+  const addDocuments = useCallback((files: File[]) => {
+    const docFiles = files.filter(f => isDocumentFile(f) && f.size <= MAX_DOC_SIZE)
+    const rejected = files.filter(f => isDocumentFile(f) && f.size > MAX_DOC_SIZE)
+    if (rejected.length > 0) {
+      console.warn(`${rejected.length} file(s) exceeded 5MB limit`)
+    }
+    setDocuments(prev => [...prev, ...docFiles.map(f => ({ file: f, filename: f.name }))])
   }, [])
+
+  const removeDocument = useCallback((index: number) => {
+    setDocuments(prev => prev.filter((_, i) => i !== index))
+  }, [])
+
+  const addFiles = useCallback((files: File[]) => {
+    const imageFiles = files.filter(isImageFile)
+    const docFiles = files.filter(f => isDocumentFile(f) && !isImageFile(f))
+    if (imageFiles.length > 0) {
+      const newImages = imageFiles.map(file => ({
+        file,
+        preview: URL.createObjectURL(file),
+      }))
+      setImages(prev => [...prev, ...newImages])
+    }
+    if (docFiles.length > 0) {
+      addDocuments(docFiles)
+    }
+  }, [addDocuments])
 
   const removeImage = useCallback((index: number) => {
     setImages(prev => {
@@ -75,32 +127,44 @@ export function TextInput() {
       imageData = await Promise.all(images.map(img => resizeAndEncode(img.file)))
     }
 
+    let documentData: Array<{data: string; filename: string}> | undefined
+    if (documents.length > 0) {
+      documentData = await Promise.all(
+        documents.map(async doc => ({
+          data: await fileToBase64DataUrl(doc.file),
+          filename: doc.filename,
+        }))
+      )
+    }
+
     ws?.send({
       type: 'send_message',
       session_id: activeSessionId,
       text: text.trim(),
       ...(imageData && { images: imageData }),
+      ...(documentData && { documents: documentData }),
     })
 
     images.forEach(img => URL.revokeObjectURL(img.preview))
     setImages([])
+    setDocuments([])
     setText('')
-  }, [text, images, activeSessionId, busy, ws, hasContent])
+  }, [text, images, documents, activeSessionId, busy, ws, hasContent])
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const files = Array.from(e.clipboardData.files)
-    if (files.some(isImageFile)) {
+    if (files.some(f => isImageFile(f) || isDocumentFile(f))) {
       e.preventDefault()
-      addImages(files)
+      addFiles(files)
     }
-  }, [addImages])
+  }, [addFiles])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     setDragOver(false)
     const files = Array.from(e.dataTransfer.files)
-    addImages(files)
-  }, [addImages])
+    addFiles(files)
+  }, [addFiles])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -142,6 +206,25 @@ export function TextInput() {
           ))}
         </div>
       )}
+      {documents.length > 0 && (
+        <div className="flex gap-2 mb-2 flex-wrap">
+          {documents.map((doc, i) => (
+            <div key={i} className="flex items-center gap-1.5 bg-surface border border-border rounded px-2 py-1 text-xs text-text group">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
+                <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
+              </svg>
+              <span className="max-w-[150px] truncate">{doc.filename}</span>
+              <button
+                onClick={() => removeDocument(i)}
+                className="w-4 h-4 text-text-dim hover:text-error transition-colors opacity-0 group-hover:opacity-100"
+              >
+                &times;
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {recording && (
         <div className="flex items-center gap-2 mb-2 text-xs">
           <span className="recording-pulse text-recording font-bold">REC</span>
@@ -161,11 +244,11 @@ export function TextInput() {
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept="image/*,.pdf,.csv,.txt,.json,.html,.md"
           multiple
           className="hidden"
           onChange={e => {
-            if (e.target.files) addImages(Array.from(e.target.files))
+            if (e.target.files) addFiles(Array.from(e.target.files))
             e.target.value = ''
           }}
         />
@@ -173,12 +256,10 @@ export function TextInput() {
           onClick={() => fileInputRef.current?.click()}
           disabled={busy || recording}
           className="px-2 py-2 text-text-dim hover:text-text transition-colors disabled:opacity-30"
-          title="Attach image"
+          title="Attach file"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>
-            <circle cx="9" cy="9" r="2"/>
-            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
+            <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
           </svg>
         </button>
         <textarea

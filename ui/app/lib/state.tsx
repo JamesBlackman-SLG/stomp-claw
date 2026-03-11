@@ -95,7 +95,7 @@ function reducer(state: AppState, action: Action): AppState {
           const existing = [...(newTurns.get(msg.session_id) || [])]
           const completedTurn: Turn = {
             id: msg.turn_id, session_id: msg.session_id, role: 'assistant',
-            content: msg.content, status: 'complete', created_at: '', completed_at: null, images: null,
+            content: msg.content, status: 'complete', created_at: '', completed_at: null, images: null, documents: null,
           }
           const existingIdx = existing.findIndex(t => t.id === msg.turn_id)
           if (existingIdx >= 0) {
