@@ -102,9 +102,7 @@ async fn send_to_llm(
         }
     }
 
-    // Build top-level input_file items (these go as siblings to the message, not inside it)
-    let mut file_items: Vec<serde_json::Value> = Vec::new();
-
+    // Add document parts inside user message content
     if !documents.is_empty() {
         use base64::Engine;
         for (doc_path, filename) in documents {
@@ -120,7 +118,7 @@ async fn send_to_llm(
                     _ => "text/plain",
                 };
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                file_items.push(serde_json::json!({
+                user_parts.push(serde_json::json!({
                     "type": "input_file",
                     "source": { "type": "base64", "media_type": media_type, "data": b64, "filename": filename }
                 }));
@@ -155,7 +153,7 @@ async fn send_to_llm(
                             _ => "text/plain",
                         };
                         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                        file_items.push(serde_json::json!({
+                        user_parts.push(serde_json::json!({
                             "type": "input_file",
                             "source": { "type": "base64", "media_type": media_type, "data": b64, "filename": filename }
                         }));
@@ -166,18 +164,17 @@ async fn send_to_llm(
         }
     }
 
-    // Build Responses API payload — input_file items are top-level siblings to the message
-    let mut input_items = vec![serde_json::json!({
-        "type": "message",
-        "role": "user",
-        "content": user_parts
-    })];
-    input_items.extend(file_items);
-
+    // Build Responses API payload
     let payload = serde_json::json!({
         "model": "openclaw",
         "instructions": system_prompt,
-        "input": input_items,
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": user_parts
+            }
+        ],
         "stream": true,
         "max_output_tokens": max_tokens,
         "user": "stomp-claw"
