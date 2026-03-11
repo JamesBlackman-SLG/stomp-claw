@@ -64,9 +64,11 @@ async fn send_to_llm(
     };
 
     // Build user content parts for Responses API
-    // API requires an input_text part — use placeholder for image-only messages
+    // API requires an input_text part — use placeholder for attachment-only messages
     let text = if user_message.is_empty() && !images.is_empty() {
         "Describe this image."
+    } else if user_message.is_empty() && !documents.is_empty() {
+        "Analyze this document."
     } else {
         user_message
     };
@@ -100,7 +102,9 @@ async fn send_to_llm(
         }
     }
 
-    // Add document parts for current message
+    // Build top-level input_file items (these go as siblings to the message, not inside it)
+    let mut file_items: Vec<serde_json::Value> = Vec::new();
+
     if !documents.is_empty() {
         use base64::Engine;
         for (doc_path, filename) in documents {
@@ -116,7 +120,7 @@ async fn send_to_llm(
                     _ => "text/plain",
                 };
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                user_parts.push(serde_json::json!({
+                file_items.push(serde_json::json!({
                     "type": "input_file",
                     "source": { "type": "base64", "media_type": media_type, "data": b64, "filename": filename }
                 }));
@@ -151,7 +155,7 @@ async fn send_to_llm(
                             _ => "text/plain",
                         };
                         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                        user_parts.push(serde_json::json!({
+                        file_items.push(serde_json::json!({
                             "type": "input_file",
                             "source": { "type": "base64", "media_type": media_type, "data": b64, "filename": filename }
                         }));
@@ -162,17 +166,18 @@ async fn send_to_llm(
         }
     }
 
-    // Build Responses API payload
+    // Build Responses API payload — input_file items are top-level siblings to the message
+    let mut input_items = vec![serde_json::json!({
+        "type": "message",
+        "role": "user",
+        "content": user_parts
+    })];
+    input_items.extend(file_items);
+
     let payload = serde_json::json!({
         "model": "openclaw",
         "instructions": system_prompt,
-        "input": [
-            {
-                "type": "message",
-                "role": "user",
-                "content": user_parts
-            }
-        ],
+        "input": input_items,
         "stream": true,
         "max_output_tokens": max_tokens,
         "user": "stomp-claw"
