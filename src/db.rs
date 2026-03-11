@@ -21,6 +21,7 @@ pub struct Turn {
     pub created_at: String,
     pub completed_at: Option<String>,
     pub images: Option<String>,
+    pub documents: Option<String>,
 }
 
 pub async fn create_pool() -> Result<SqlitePool, sqlx::Error> {
@@ -69,6 +70,9 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     ).execute(pool).await?;
 
     let _ = sqlx::query("ALTER TABLE turns ADD COLUMN images TEXT")
+        .execute(pool).await;
+
+    let _ = sqlx::query("ALTER TABLE turns ADD COLUMN documents TEXT")
         .execute(pool).await;
 
     sqlx::query(
@@ -148,7 +152,7 @@ pub async fn touch_session(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Erro
 // --- Turn CRUD ---
 
 pub async fn get_turns(pool: &SqlitePool, session_id: &str) -> Result<Vec<Turn>, sqlx::Error> {
-    let rows = sqlx::query("SELECT id, session_id, role, content, status, created_at, completed_at, images FROM turns WHERE session_id = ? ORDER BY id")
+    let rows = sqlx::query("SELECT id, session_id, role, content, status, created_at, completed_at, images, documents FROM turns WHERE session_id = ? ORDER BY id")
         .bind(session_id)
         .fetch_all(pool).await?;
     Ok(rows.iter().map(|r| Turn {
@@ -160,11 +164,12 @@ pub async fn get_turns(pool: &SqlitePool, session_id: &str) -> Result<Vec<Turn>,
         created_at: r.get("created_at"),
         completed_at: r.get("completed_at"),
         images: r.get("images"),
+        documents: r.get("documents"),
     }).collect())
 }
 
 pub async fn get_turns_after(pool: &SqlitePool, session_id: &str, after_id: i64) -> Result<Vec<Turn>, sqlx::Error> {
-    let rows = sqlx::query("SELECT id, session_id, role, content, status, created_at, completed_at, images FROM turns WHERE session_id = ? AND id > ? ORDER BY id")
+    let rows = sqlx::query("SELECT id, session_id, role, content, status, created_at, completed_at, images, documents FROM turns WHERE session_id = ? AND id > ? ORDER BY id")
         .bind(session_id)
         .bind(after_id)
         .fetch_all(pool).await?;
@@ -177,6 +182,7 @@ pub async fn get_turns_after(pool: &SqlitePool, session_id: &str, after_id: i64)
         created_at: r.get("created_at"),
         completed_at: r.get("completed_at"),
         images: r.get("images"),
+        documents: r.get("documents"),
     }).collect())
 }
 
@@ -203,6 +209,24 @@ pub async fn create_turn_with_images(pool: &SqlitePool, session_id: &str, role: 
         .bind(images)
         .execute(pool).await?;
     Ok(result.last_insert_rowid())
+}
+
+pub async fn create_turn_with_attachments(
+    pool: &SqlitePool, session_id: &str, role: &str, content: &str, status: &str,
+    images: Option<&str>, documents: Option<&str>,
+) -> Result<i64, sqlx::Error> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "INSERT INTO turns (session_id, role, content, status, created_at, images, documents) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).bind(session_id).bind(role).bind(content).bind(status).bind(&now).bind(images).bind(documents)
+        .execute(pool).await?;
+    Ok(result.last_insert_rowid())
+}
+
+pub async fn get_session_documents(pool: &SqlitePool, session_id: &str) -> Result<Vec<String>, sqlx::Error> {
+    let rows = sqlx::query("SELECT documents FROM turns WHERE session_id = ? AND role = 'user' AND documents IS NOT NULL ORDER BY id")
+        .bind(session_id).fetch_all(pool).await?;
+    Ok(rows.iter().map(|r| r.get::<String, _>("documents")).collect())
 }
 
 pub async fn update_turn_content(pool: &SqlitePool, turn_id: i64, content: &str) -> Result<(), sqlx::Error> {

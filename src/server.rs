@@ -51,10 +51,16 @@ enum WsOutgoing {
 }
 
 #[derive(Deserialize)]
+struct WsDocument {
+    data: String,
+    filename: String,
+}
+
+#[derive(Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 enum WsIncoming {
-    SendMessage { session_id: String, text: String, #[serde(default)] images: Vec<String> },
+    SendMessage { session_id: String, text: String, #[serde(default)] images: Vec<String>, #[serde(default)] documents: Vec<WsDocument> },
     SwitchSession { session_id: String },
     CreateSession,
     RenameSession { session_id: String, name: String },
@@ -76,24 +82,42 @@ async fn local_file_handler(
         Some(p) => std::path::PathBuf::from(p),
         None => return axum::http::StatusCode::BAD_REQUEST.into_response(),
     };
-
-    // Only serve image files
-    let ext = path.extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    let allowed = matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico");
-    if !allowed {
-        return (axum::http::StatusCode::FORBIDDEN, "Only image files allowed").into_response();
+    let canonical = match path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return axum::http::StatusCode::NOT_FOUND.into_response(),
+    };
+    let base_dir = app_config::base_dir().canonicalize().unwrap_or_default();
+    if !canonical.starts_with(&base_dir) {
+        return (axum::http::StatusCode::FORBIDDEN, "Access denied").into_response();
     }
-
-    match tokio::fs::read(&path).await {
+    let ext = canonical.extension()
+        .and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let allowed = matches!(ext.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" |
+        "pdf" | "csv" | "txt" | "json" | "html" | "md"
+    );
+    if !allowed {
+        return (axum::http::StatusCode::FORBIDDEN, "File type not allowed").into_response();
+    }
+    match tokio::fs::read(&canonical).await {
         Ok(data) => {
-            let mime = mime_guess::from_path(&path).first_or_octet_stream();
-            (
-                [(axum::http::header::CONTENT_TYPE, mime.as_ref().to_string())],
-                data,
-            ).into_response()
+            let mime = mime_guess::from_path(&canonical).first_or_octet_stream();
+            if matches!(ext.as_str(), "pdf" | "csv" | "txt" | "json" | "html" | "md") {
+                let filename = canonical.file_name()
+                    .and_then(|n| n.to_str()).unwrap_or("download");
+                (
+                    [
+                        (axum::http::header::CONTENT_TYPE, mime.as_ref().to_string()),
+                        (axum::http::header::CONTENT_DISPOSITION, format!("inline; filename=\"{}\"", filename)),
+                    ],
+                    data,
+                ).into_response()
+            } else {
+                (
+                    [(axum::http::header::CONTENT_TYPE, mime.as_ref().to_string())],
+                    data,
+                ).into_response()
+            }
         }
         Err(_) => axum::http::StatusCode::NOT_FOUND.into_response(),
     }
@@ -470,9 +494,41 @@ fn save_base64_image(data_url: &str, dir: &std::path::Path) -> Option<String> {
     }
 }
 
+fn save_document(data_url: &str, original_filename: &str, dir: &std::path::Path) -> Option<(String, String)> {
+    let parts: Vec<&str> = data_url.splitn(2, ',').collect();
+    if parts.len() != 2 { return None; }
+    let header = parts[0];
+    let b64_data = parts[1];
+    let ext = if header.contains("application/pdf") { "pdf" }
+        else if header.contains("text/csv") { "csv" }
+        else if header.contains("application/json") { "json" }
+        else if header.contains("text/html") { "html" }
+        else if header.contains("text/markdown") { "md" }
+        else if header.contains("text/plain") { "txt" }
+        else {
+            std::path::Path::new(original_filename)
+                .extension().and_then(|e| e.to_str()).unwrap_or("txt")
+        };
+    use base64::Engine;
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(b64_data) {
+        Ok(b) => b,
+        Err(e) => { tracing::error!("Failed to decode base64 document: {}", e); return None; }
+    };
+    if bytes.len() > 5 * 1024 * 1024 {
+        tracing::warn!("Document too large: {} bytes (max 5MB)", bytes.len());
+        return None;
+    }
+    let filename = format!("{}.{}", uuid::Uuid::new_v4(), ext);
+    let path = dir.join(&filename);
+    match std::fs::write(&path, &bytes) {
+        Ok(_) => Some((path.to_string_lossy().to_string(), original_filename.to_string())),
+        Err(e) => { tracing::error!("Failed to write document: {}", e); None }
+    }
+}
+
 async fn handle_ws_message(msg: WsIncoming, tx: &EventSender, pool: &SqlitePool) {
     match msg {
-        WsIncoming::SendMessage { session_id, text, images } => {
+        WsIncoming::SendMessage { session_id, text, images, documents } => {
             let mut image_paths: Vec<String> = Vec::new();
             if !images.is_empty() {
                 let images_dir = app_config::base_dir().join("images");
@@ -483,7 +539,17 @@ async fn handle_ws_message(msg: WsIncoming, tx: &EventSender, pool: &SqlitePool)
                     }
                 }
             }
-            let _ = tx.send(Event::UserTextMessage { session_id, text, images: image_paths });
+            let mut doc_entries: Vec<(String, String)> = Vec::new();
+            if !documents.is_empty() {
+                let docs_dir = app_config::base_dir().join("documents");
+                let _ = std::fs::create_dir_all(&docs_dir);
+                for doc in &documents {
+                    if let Some(entry) = save_document(&doc.data, &doc.filename, &docs_dir) {
+                        doc_entries.push(entry);
+                    }
+                }
+            }
+            let _ = tx.send(Event::UserTextMessage { session_id, text, images: image_paths, documents: doc_entries });
         }
         WsIncoming::SwitchSession { session_id } => {
             let _ = db::set_active_session_id(pool, &session_id).await;
