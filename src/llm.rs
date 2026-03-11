@@ -117,9 +117,8 @@ async fn send_to_llm(
                 };
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                 user_parts.push(serde_json::json!({
-                    "type": "file",
-                    "source": { "type": "base64", "media_type": media_type, "data": b64 },
-                    "filename": filename
+                    "type": "input_file",
+                    "source": { "type": "base64", "media_type": media_type, "data": b64, "filename": filename }
                 }));
             }
         }
@@ -153,9 +152,8 @@ async fn send_to_llm(
                         };
                         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                         user_parts.push(serde_json::json!({
-                            "type": "file",
-                            "source": { "type": "base64", "media_type": media_type, "data": b64 },
-                            "filename": filename
+                            "type": "input_file",
+                            "source": { "type": "base64", "media_type": media_type, "data": b64, "filename": filename }
                         }));
                     }
                 }
