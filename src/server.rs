@@ -43,11 +43,12 @@ enum WsOutgoing {
     PartialTranscript { session_id: String, text: String },
     LlmThinking { session_id: String, turn_id: i64 },
     LlmToken { session_id: String, turn_id: i64, token: String, accumulated: String },
-    LlmDone { session_id: String, turn_id: i64, content: String },
+    LlmDone { session_id: String, turn_id: i64, content: String, input_tokens: Option<u32>, output_tokens: Option<u32>, total_tokens: Option<u32> },
     LlmError { session_id: String, turn_id: i64, error: String },
     VoiceToggled { enabled: bool },
     ShowHelp,
     Config { voice_enabled: bool, active_session_id: String },
+    ContextUsage { total_tokens: u32, context_window: u32 },
 }
 
 #[derive(Deserialize)]
@@ -353,9 +354,12 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
     if !active_session_id.is_empty() {
         if let Ok(turns) = db::get_turns(&state.pool, &active_session_id).await {
             let _ = send_ws(&mut ws_tx, &WsOutgoing::TurnList {
-                session_id: active_session_id,
+                session_id: active_session_id.clone(),
                 turns,
             }).await;
+        }
+        if let Ok(Some(tokens)) = db::get_session_tokens(&state.pool, &active_session_id).await {
+            let _ = send_ws(&mut ws_tx, &WsOutgoing::ContextUsage { total_tokens: tokens, context_window: app_config::openclaw_context_window() }).await;
         }
     }
 
@@ -385,7 +389,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                         }
                         Event::LlmToken { session_id, turn_id, token, accumulated } =>
                             Some(WsOutgoing::LlmToken { session_id, turn_id, token, accumulated }),
-                        Event::LlmDone { session_id, turn_id, full_response } => {
+                        Event::LlmDone { session_id, turn_id, full_response, input_tokens, output_tokens, total_tokens } => {
                             // Send final turn list so UI has the completed assistant turn from DB
                             if let Ok(turns) = db::get_turns(&pool, &session_id).await {
                                 let _ = send_ws(&mut forward_tx, &WsOutgoing::TurnList {
@@ -393,7 +397,13 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                     turns,
                                 }).await;
                             }
-                            Some(WsOutgoing::LlmDone { session_id, turn_id, content: full_response })
+                            if let Some(tokens) = total_tokens {
+                                let _ = send_ws(&mut forward_tx, &WsOutgoing::ContextUsage {
+                                    total_tokens: tokens,
+                                    context_window: app_config::openclaw_context_window(),
+                                }).await;
+                            }
+                            Some(WsOutgoing::LlmDone { session_id, turn_id, content: full_response, input_tokens, output_tokens, total_tokens })
                         }
                         Event::LlmError { session_id, turn_id, error } => {
                             // Send updated turn list so UI sees the error status from DB
@@ -415,6 +425,9 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                     session_id: session_id.clone(),
                                     turns,
                                 }).await;
+                            }
+                            if let Ok(Some(tokens)) = db::get_session_tokens(&pool, &session_id).await {
+                                let _ = send_ws(&mut forward_tx, &WsOutgoing::ContextUsage { total_tokens: tokens, context_window: app_config::openclaw_context_window() }).await;
                             }
                             None // Already sent manually
                         }

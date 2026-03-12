@@ -25,6 +25,42 @@ pub const TEXT_SYSTEM_PROMPT: &str = "You are Alan, James's AI assistant. You ar
 pub const VOICE_MAX_TOKENS: u32 = 150;
 pub const TEXT_MAX_TOKENS: u32 = 2000;
 
+/// Read the current primary model from OpenClaw config and return its context window size.
+pub fn openclaw_context_window() -> u32 {
+    let config_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".openclaw/openclaw.json");
+
+    let content = match std::fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(_) => return 200_000, // safe default
+    };
+
+    let json: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return 200_000,
+    };
+
+    let model_id = json
+        .pointer("/agents/defaults/model/primary")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    model_context_window(model_id)
+}
+
+fn model_context_window(model_id: &str) -> u32 {
+    match model_id {
+        s if s.contains("MiniMax-M2.5") => 1_000_000,
+        s if s.contains("claude-opus") => 200_000,
+        s if s.contains("claude-sonnet") => 200_000,
+        s if s.contains("claude-haiku") => 200_000,
+        s if s.contains("gpt-4o") => 128_000,
+        s if s.contains("gpt-4-turbo") => 128_000,
+        _ => 200_000, // safe default
+    }
+}
+
 pub fn base_dir() -> PathBuf {
     dirs::home_dir()
         .expect("No home directory found")

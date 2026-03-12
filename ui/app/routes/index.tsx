@@ -2,6 +2,7 @@ import { SessionSidebar } from '../components/SessionSidebar'
 import { ChatView } from '../components/ChatView'
 import { StatusBar } from '../components/StatusBar'
 import { TextInput } from '../components/TextInput'
+import { ContextBar } from '../components/ContextBar'
 import { ConnectionStatus } from '../components/ConnectionStatus'
 import { HelpModal } from '../components/HelpModal'
 import { useAppState, useDispatch } from '../lib/state'
@@ -44,6 +45,7 @@ export function Home() {
           <StatusBar />
           <ChatView />
           <TextInput />
+          <ContextBar />
         </main>
       </div>
       {showHelp && <HelpModal onClose={() => dispatch({ type: 'set_show_help', show: false })} />}

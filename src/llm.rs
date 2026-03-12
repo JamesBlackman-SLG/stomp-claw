@@ -7,12 +7,27 @@ use crate::config;
 use crate::db;
 use crate::events::{Event, EventSender, EventReceiver};
 
-/// Responses API streaming event — we only care about text deltas and completion
+/// Usage data from the Responses API response.completed event
+#[derive(Deserialize, Clone, Debug)]
+struct UsageData {
+    input_tokens: u32,
+    output_tokens: u32,
+    total_tokens: u32,
+}
+
+/// Inner response object (from response.completed)
+#[derive(Deserialize)]
+struct ResponseObject {
+    usage: Option<UsageData>,
+}
+
+/// Responses API streaming event — we care about text deltas, completion, and usage
 #[derive(Deserialize)]
 struct ResponsesEvent {
     #[serde(rename = "type")]
     event_type: String,
     delta: Option<String>,
+    response: Option<ResponseObject>,
 }
 
 async fn send_to_llm(
@@ -186,6 +201,7 @@ async fn send_to_llm(
     let mut stream_done = false;
     let mut token_count = 0u32;
     let mut last_db_update = std::time::Instant::now();
+    let mut usage: Option<UsageData> = None;
 
     loop {
         if stream_done { break; }
@@ -251,6 +267,12 @@ async fn send_to_llm(
                             }
                         }
                     } else if evt.event_type == "response.completed" {
+                        if let Some(ref resp) = evt.response {
+                            if let Some(ref u) = resp.usage {
+                                tracing::info!("Usage: input={}, output={}, total={}", u.input_tokens, u.output_tokens, u.total_tokens);
+                                usage = Some(u.clone());
+                            }
+                        }
                         tracing::info!("Received response.completed");
                         stream_done = true;
                         break;
@@ -270,10 +292,16 @@ async fn send_to_llm(
         });
     } else {
         let _ = db::complete_turn(pool, assistant_turn_id, &full_reply).await;
+        if let Some(ref u) = usage {
+            let _ = db::set_session_tokens(pool, session_id, u.total_tokens).await;
+        }
         let _ = tx.send(Event::LlmDone {
             session_id: session_id.to_string(),
             turn_id: assistant_turn_id,
             full_response: full_reply,
+            input_tokens: usage.as_ref().map(|u| u.input_tokens),
+            output_tokens: usage.as_ref().map(|u| u.output_tokens),
+            total_tokens: usage.as_ref().map(|u| u.total_tokens),
         });
     }
 }

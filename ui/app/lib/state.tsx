@@ -15,6 +15,10 @@ interface AppState {
   thinking: boolean
   showHelp: boolean
   sidebarOpen: boolean
+  inputTokens: number | null
+  outputTokens: number | null
+  totalTokens: number | null
+  contextWindow: number | null
 }
 
 type Action =
@@ -36,6 +40,10 @@ const initialState: AppState = {
   thinking: false,
   showHelp: false,
   sidebarOpen: false,
+  inputTokens: null,
+  outputTokens: null,
+  totalTokens: null,
+  contextWindow: null,
 }
 
 function reducer(state: AppState, action: Action): AppState {
@@ -61,7 +69,7 @@ function reducer(state: AppState, action: Action): AppState {
         case 'session_list':
           return { ...state, sessions: msg.sessions }
         case 'session_switched':
-          return { ...state, activeSessionId: msg.session_id, turns: new Map(), recording: false, partialTranscript: '', thinking: false, streamingTurnId: null, streamingContent: '', sidebarOpen: false }
+          return { ...state, activeSessionId: msg.session_id, turns: new Map(), recording: false, partialTranscript: '', thinking: false, streamingTurnId: null, streamingContent: '', sidebarOpen: false, inputTokens: null, outputTokens: null, totalTokens: null, contextWindow: null }
         case 'session_created':
           return { ...state, sessions: [...state.sessions, msg.session] }
         case 'session_renamed':
@@ -104,7 +112,12 @@ function reducer(state: AppState, action: Action): AppState {
             existing.push(completedTurn)
           }
           newTurns.set(msg.session_id, existing)
-          return { ...state, turns: newTurns, streamingTurnId: null, streamingContent: '', thinking: false }
+          return {
+            ...state, turns: newTurns, streamingTurnId: null, streamingContent: '', thinking: false,
+            inputTokens: msg.input_tokens ?? state.inputTokens,
+            outputTokens: msg.output_tokens ?? state.outputTokens,
+            totalTokens: msg.total_tokens ?? state.totalTokens,
+          }
         }
         case 'llm_error': {
           // Update the assistant turn to show error status
@@ -119,6 +132,8 @@ function reducer(state: AppState, action: Action): AppState {
           }
           return { ...state, turns: newTurns, streamingTurnId: null, streamingContent: '', thinking: false }
         }
+        case 'context_usage':
+          return { ...state, totalTokens: msg.total_tokens, contextWindow: msg.context_window }
         case 'voice_toggled':
           return { ...state, voiceEnabled: msg.enabled }
         case 'show_help':

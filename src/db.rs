@@ -268,6 +268,17 @@ pub async fn set_active_session_id(pool: &SqlitePool, id: &str) -> Result<(), sq
     set_config(pool, "active_session_id", id).await
 }
 
+pub async fn get_session_tokens(pool: &SqlitePool, session_id: &str) -> Result<Option<u32>, sqlx::Error> {
+    let key = format!("context_tokens:{}", session_id);
+    let val = get_config(pool, &key).await?;
+    Ok(val.and_then(|v| v.parse().ok()))
+}
+
+pub async fn set_session_tokens(pool: &SqlitePool, session_id: &str, total_tokens: u32) -> Result<(), sqlx::Error> {
+    let key = format!("context_tokens:{}", session_id);
+    set_config(pool, &key, &total_tokens.to_string()).await
+}
+
 // --- Migration from v1 ---
 
 pub async fn migrate_from_v1(pool: &SqlitePool) -> Result<(), Box<dyn std::error::Error>> {

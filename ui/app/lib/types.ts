@@ -31,11 +31,12 @@ export type WsMessage =
   | { type: 'partial_transcript'; session_id: string; text: string }
   | { type: 'llm_thinking'; session_id: string; turn_id: number }
   | { type: 'llm_token'; session_id: string; turn_id: number; token: string; accumulated: string }
-  | { type: 'llm_done'; session_id: string; turn_id: number; content: string }
+  | { type: 'llm_done'; session_id: string; turn_id: number; content: string; input_tokens?: number; output_tokens?: number; total_tokens?: number }
   | { type: 'llm_error'; session_id: string; turn_id: number; error: string }
   | { type: 'voice_toggled'; enabled: boolean }
   | { type: 'show_help' }
   | { type: 'config'; voice_enabled: boolean; active_session_id: string }
+  | { type: 'context_usage'; total_tokens: number; context_window: number }
 
 // Client -> Server messages
 export type WsCommand =
