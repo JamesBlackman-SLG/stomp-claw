@@ -87,7 +87,9 @@ async fn local_file_handler(
         Err(_) => return axum::http::StatusCode::NOT_FOUND.into_response(),
     };
     let base_dir = app_config::base_dir().canonicalize().unwrap_or_default();
-    if !canonical.starts_with(&base_dir) {
+    let openclaw_dir = dirs::home_dir().unwrap_or_default().join(".openclaw");
+    let openclaw_dir = openclaw_dir.canonicalize().unwrap_or(openclaw_dir);
+    if !canonical.starts_with(&base_dir) && !canonical.starts_with(&openclaw_dir) {
         return (axum::http::StatusCode::FORBIDDEN, "Access denied").into_response();
     }
     let ext = canonical.extension()
