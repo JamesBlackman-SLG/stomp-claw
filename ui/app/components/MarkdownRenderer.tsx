@@ -1,12 +1,13 @@
 import { useState, useCallback } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkBreaks from 'remark-breaks'
 import remarkMath from 'remark-math'
 import rehypeHighlight from 'rehype-highlight'
 import rehypeKatex from 'rehype-katex'
 import type { Components } from 'react-markdown'
 
-const remarkPlugins = [remarkGfm, remarkMath]
+const remarkPlugins = [remarkGfm, remarkBreaks, remarkMath]
 const rehypePlugins = [rehypeHighlight, rehypeKatex]
 
 function extractTextContent(node: any): string {
@@ -138,8 +139,27 @@ function preprocessImagePaths(content: string): string {
   return content
 }
 
+// Insert line breaks where the LLM omits them between distinct thoughts.
+// Matches sentence-ending punctuation (.:) glued directly to a new sentence
+// starting with a capital letter, but avoids splitting inside markdown links,
+// URLs, code spans, heading markers, or common abbreviations like "e.g." / "i.e."
+function insertMissingBreaks(text: string): string {
+  return text.replace(
+    /([.:])([A-Z])/g,
+    (match, punct, cap, offset) => {
+      // Don't break inside code spans, URLs, or markdown syntax
+      const before = text.slice(Math.max(0, offset - 50), offset + 1)
+      if (/`[^`]*$/.test(before)) return match        // inside backtick
+      if (/https?:$/.test(before)) return match        // URL
+      if (/[#*\[]$/.test(before)) return match         // markdown syntax
+      if (/(?:e\.g|i\.e|vs|etc|Dr|Mr|Mrs|Ms|St|Jr|Sr)\.$/i.test(before)) return match  // abbreviation
+      return punct + '\n\n' + cap
+    }
+  )
+}
+
 export function MarkdownRenderer({ content }: { content: string }) {
-  const processed = preprocessImagePaths(content)
+  const processed = preprocessImagePaths(insertMissingBreaks(content))
   return (
     <div className="markdown-body prose prose-invert prose-sm max-w-none">
       <Markdown

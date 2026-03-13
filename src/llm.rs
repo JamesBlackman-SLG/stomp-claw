@@ -318,45 +318,25 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver, pool: SqlitePool) {
         .map(|v| v == "true")
         .unwrap_or(true);
 
-    // Track busy sessions
-    let mut busy_sessions = std::collections::HashSet::new();
-
     loop {
         match rx.recv().await {
             Ok(Event::FinalTranscript { session_id, text }) => {
-                if busy_sessions.contains(&session_id) {
-                    tracing::warn!("Session {} is busy, rejecting message", session_id);
-                    let _ = tx.send(Event::LlmError {
-                        session_id: session_id.clone(),
-                        turn_id: 0,
-                        error: "Session is busy".to_string(),
-                    });
-                    continue;
-                }
-
-                busy_sessions.insert(session_id.clone());
-                let _ = db::touch_session(&pool, &session_id).await;
-
-                send_to_llm(&tx, &pool, &client, &session_id, &text, voice_enabled, &[], &[]).await;
-
-                busy_sessions.remove(&session_id);
+                let tx = tx.clone();
+                let pool = pool.clone();
+                let client = client.clone();
+                tokio::spawn(async move {
+                    let _ = db::touch_session(&pool, &session_id).await;
+                    send_to_llm(&tx, &pool, &client, &session_id, &text, voice_enabled, &[], &[]).await;
+                });
             }
             Ok(Event::UserTextMessage { session_id, text, images, documents }) => {
-                if busy_sessions.contains(&session_id) {
-                    let _ = tx.send(Event::LlmError {
-                        session_id: session_id.clone(),
-                        turn_id: 0,
-                        error: "Session is busy".to_string(),
-                    });
-                    continue;
-                }
-
-                busy_sessions.insert(session_id.clone());
-                let _ = db::touch_session(&pool, &session_id).await;
-
-                send_to_llm(&tx, &pool, &client, &session_id, &text, voice_enabled, &images, &documents).await;
-
-                busy_sessions.remove(&session_id);
+                let tx = tx.clone();
+                let pool = pool.clone();
+                let client = client.clone();
+                tokio::spawn(async move {
+                    let _ = db::touch_session(&pool, &session_id).await;
+                    send_to_llm(&tx, &pool, &client, &session_id, &text, voice_enabled, &images, &documents).await;
+                });
             }
             Ok(Event::VoiceToggled { enabled }) => {
                 voice_enabled = enabled;

@@ -72,7 +72,7 @@ body {
 /* ===== Markdown body styles ===== */
 
 .markdown-body p {
-    margin: 0.4em 0;
+    margin: 1em 0;
 }
 
 .markdown-body > *:first-child {

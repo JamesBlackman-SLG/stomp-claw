@@ -47,11 +47,12 @@ export function SessionSidebar() {
         {sessions.map(session => (
           <div
             key={session.id}
-            className={`group flex items-center gap-2 px-3 py-2 cursor-pointer text-sm border-l-2 ${
+            className={`group flex items-center gap-2 px-3 py-2 cursor-pointer select-none text-sm border-l-2 ${
               session.id === activeSessionId
                 ? 'border-accent bg-surface-hover text-text'
                 : 'border-transparent hover:bg-surface-hover text-text-dim'
             }`}
+            style={{ WebkitTapHighlightColor: 'transparent' }}
             onClick={() => ws?.send({ type: 'switch_session', session_id: session.id })}
           >
             {session.id === activeSessionId && (
@@ -71,7 +72,7 @@ export function SessionSidebar() {
                 onClick={e => e.stopPropagation()}
               />
             ) : (
-              <span className="flex-1 truncate text-xs">{session.name}</span>
+              <span className="flex-1 truncate text-xs select-none">{session.name}</span>
             )}
             <div className="hidden group-hover:flex items-center gap-1">
               <button
