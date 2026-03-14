@@ -57,7 +57,7 @@ async fn main() {
     }
 
     // Create event bus
-    let (tx, _rx) = events::create_event_bus(256);
+    let (tx, _rx) = events::create_event_bus(2048);
 
     // Spawn modules
     let voice_enabled = db::get_config(&pool, "voice_enabled").await
@@ -147,6 +147,7 @@ async fn handle_voice_commands(
                         beep::play_session_tone(0);
                     }
                     events::Command::SwitchSession(query) => {
+                        tracing::info!("Processing SwitchSession command: '{}'", query);
                         let sessions = db::get_sessions(&pool).await.unwrap_or_default();
                         let names: Vec<String> = sessions.iter().map(|s| s.name.clone()).collect();
 
@@ -154,15 +155,19 @@ async fn handle_voice_commands(
                         if let Ok(num) = query.parse::<usize>() {
                             if num > 0 && num <= sessions.len() {
                                 let session = &sessions[num - 1];
+                                tracing::info!("Switching to session #{}: {}", num, session.name);
                                 let _ = db::set_active_session_id(&pool, &session.id).await;
                                 let _ = tx.send(events::Event::SessionSwitched { session_id: session.id.clone() });
                                 beep::play_session_tone(num - 1);
                             }
                         } else if let Some(matched_name) = commands::fuzzy_match_session(&query, &names) {
                             if let Some(session) = sessions.iter().find(|s| s.name == matched_name) {
+                                tracing::info!("Switching to session by name: '{}'", matched_name);
                                 let _ = db::set_active_session_id(&pool, &session.id).await;
                                 let _ = tx.send(events::Event::SessionSwitched { session_id: session.id.clone() });
                             }
+                        } else {
+                            tracing::warn!("No session matched for query: '{}' (available: {:?})", query, names);
                         }
                     }
                     events::Command::ListSessions => {

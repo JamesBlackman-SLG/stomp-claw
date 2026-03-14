@@ -65,8 +65,10 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver, pool: SqlitePool) {
 
                         // Check for voice commands (including bare session name matching)
                         if let Some(cmd) = commands::parse_command_with_sessions(&text, &session_names) {
+                            tracing::info!("Voice command detected: {:?}", cmd);
                             let _ = tx.send(Event::VoiceCommand { command: cmd });
                         } else {
+                            tracing::debug!("No command match for '{}' (sessions: {:?})", text, session_names);
                             let _ = tx.send(Event::FinalTranscript {
                                 session_id,
                                 text,

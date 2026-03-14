@@ -98,8 +98,8 @@ pub fn parse_command_with_sessions(transcript: &str, session_names: &[String]) -
     // Then try bare session name fuzzy match (e.g. just saying "arctic pebble")
     let text = strip_punctuation(&transcript.trim().to_lowercase());
     if !text.is_empty() {
-        if let Some(_matched) = fuzzy_match_session(&text, session_names) {
-            return Some(Command::SwitchSession(text));
+        if let Some(matched) = fuzzy_match_session(&text, session_names) {
+            return Some(Command::SwitchSession(matched));
         }
     }
 

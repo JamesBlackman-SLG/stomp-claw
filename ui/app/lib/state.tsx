@@ -88,15 +88,15 @@ function reducer(state: AppState, action: Action): AppState {
           return { ...state, turns: newTurns }
         }
         case 'recording_started':
-          return { ...state, recording: true, partialTranscript: '' }
+          return msg.session_id === state.activeSessionId ? { ...state, recording: true, partialTranscript: '' } : state
         case 'recording_cancelled':
-          return { ...state, recording: false, partialTranscript: '' }
+          return msg.session_id === state.activeSessionId ? { ...state, recording: false, partialTranscript: '' } : state
         case 'partial_transcript':
-          return { ...state, partialTranscript: msg.text }
+          return msg.session_id === state.activeSessionId ? { ...state, partialTranscript: msg.text } : state
         case 'llm_thinking':
-          return { ...state, thinking: true, recording: false, streamingTurnId: msg.turn_id }
+          return msg.session_id === state.activeSessionId ? { ...state, thinking: true, recording: false, streamingTurnId: msg.turn_id } : state
         case 'llm_token':
-          return { ...state, thinking: false, streamingContent: msg.accumulated, streamingTurnId: msg.turn_id }
+          return msg.session_id === state.activeSessionId ? { ...state, thinking: false, streamingContent: msg.accumulated, streamingTurnId: msg.turn_id } : state
         case 'llm_done': {
           // Immutable update — don't mutate the existing array
           const newTurns = new Map(state.turns)
@@ -112,11 +112,15 @@ function reducer(state: AppState, action: Action): AppState {
             existing.push(completedTurn)
           }
           newTurns.set(msg.session_id, existing)
+          const isActive = msg.session_id === state.activeSessionId
           return {
-            ...state, turns: newTurns, streamingTurnId: null, streamingContent: '', thinking: false,
-            inputTokens: msg.input_tokens ?? state.inputTokens,
-            outputTokens: msg.output_tokens ?? state.outputTokens,
-            totalTokens: msg.total_tokens ?? state.totalTokens,
+            ...state, turns: newTurns,
+            streamingTurnId: isActive ? null : state.streamingTurnId,
+            streamingContent: isActive ? '' : state.streamingContent,
+            thinking: isActive ? false : state.thinking,
+            inputTokens: isActive ? (msg.input_tokens ?? state.inputTokens) : state.inputTokens,
+            outputTokens: isActive ? (msg.output_tokens ?? state.outputTokens) : state.outputTokens,
+            totalTokens: isActive ? (msg.total_tokens ?? state.totalTokens) : state.totalTokens,
           }
         }
         case 'llm_error': {
@@ -130,7 +134,8 @@ function reducer(state: AppState, action: Action): AppState {
               newTurns.set(msg.session_id, existing)
             }
           }
-          return { ...state, turns: newTurns, streamingTurnId: null, streamingContent: '', thinking: false }
+          const isActiveErr = msg.session_id === state.activeSessionId
+          return { ...state, turns: newTurns, streamingTurnId: isActiveErr ? null : state.streamingTurnId, streamingContent: isActiveErr ? '' : state.streamingContent, thinking: isActiveErr ? false : state.thinking }
         }
         case 'context_usage':
           return { ...state, totalTokens: msg.total_tokens, contextWindow: msg.context_window }
