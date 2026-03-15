@@ -16,8 +16,6 @@ pub enum Command {
     ListSessions,
     RenameSession(String),
     DeleteSession,
-    ConfirmDelete,
-    CancelDelete,
     VoiceOn,
     VoiceOff,
     Help,

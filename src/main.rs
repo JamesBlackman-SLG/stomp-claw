@@ -70,9 +70,10 @@ async fn main() {
     // Audio runs on a dedicated thread (cpal::Stream is not Send)
     let audio_tx = tx.clone();
     let audio_rx = tx.subscribe();
+    let audio_pool = pool.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create audio runtime");
-        rt.block_on(audio::run(audio_tx, audio_rx));
+        rt.block_on(audio::run(audio_tx, audio_rx, audio_pool));
     });
 
     let trans_tx = tx.clone();
@@ -118,8 +119,6 @@ async fn handle_voice_commands(
     mut rx: events::EventReceiver,
     pool: sqlx::SqlitePool,
 ) {
-    let mut awaiting_delete = false;
-
     loop {
         match rx.recv().await {
             Ok(events::Event::VoiceCommand { command }) => {
@@ -198,27 +197,6 @@ async fn handle_voice_commands(
                                 let _ = tx.send(events::Event::VoiceCommand { command: events::Command::NewSession });
                             }
                         }
-                    }
-                    events::Command::ConfirmDelete => {
-                        if awaiting_delete {
-                            awaiting_delete = false;
-                            if let Some(id) = db::get_active_session_id(&pool).await.ok().flatten() {
-                                let _ = db::delete_session(&pool, &id).await;
-                                let _ = tx.send(events::Event::SessionDeleted { session_id: id });
-                                // Switch to another session or create new
-                                let remaining = db::get_sessions(&pool).await.unwrap_or_default();
-                                if let Some(next) = remaining.first() {
-                                    let _ = db::set_active_session_id(&pool, &next.id).await;
-                                    let _ = tx.send(events::Event::SessionSwitched { session_id: next.id.clone() });
-                                } else {
-                                    // Create new session
-                                    let _ = tx.send(events::Event::VoiceCommand { command: events::Command::NewSession });
-                                }
-                            }
-                        }
-                    }
-                    events::Command::CancelDelete => {
-                        awaiting_delete = false;
                     }
                     events::Command::VoiceOn => {
                         let _ = db::set_config(&pool, "voice_enabled", "true").await;

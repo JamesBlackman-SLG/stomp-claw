@@ -6,7 +6,10 @@ use std::io::Read;
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use tempfile::NamedTempFile;
 
+use sqlx::SqlitePool;
+
 use crate::config;
+use crate::db;
 use crate::events::{Event, EventSender, EventReceiver};
 use crate::commands;
 
@@ -43,7 +46,7 @@ async fn partial_transcribe(samples: &[f32], client: &Client) -> Option<String> 
     if trimmed.is_empty() { None } else { Some(trimmed) }
 }
 
-pub async fn run(tx: EventSender, mut rx: EventReceiver) {
+pub async fn run(tx: EventSender, mut rx: EventReceiver, pool: SqlitePool) {
     let host = cpal::default_host();
     let device = host.default_input_device().expect("No input device");
     tracing::info!("Audio device: {:?}", device.name());
@@ -104,6 +107,7 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver) {
                 let samples2 = samples.clone();
                 let recording2 = recording.clone();
                 let client2 = client.clone();
+                let pool2 = pool.clone();
                 let sid = session_id.clone();
 
                 tokio::spawn(async move {
@@ -123,6 +127,27 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver) {
                                     });
                                     break;
                                 }
+
+                                // During the first 2 seconds, check for commands/session switches
+                                if start.elapsed().as_millis() <= 2000 {
+                                    let session_names: Vec<String> = db::get_sessions(&pool2).await
+                                        .unwrap_or_default()
+                                        .iter()
+                                        .map(|s| s.name.clone())
+                                        .collect();
+
+                                    if let Some(cmd) = commands::parse_command_with_sessions(&text, &session_names) {
+                                        tracing::info!("Command detected during recording: {:?} from partial '{}'", cmd, text);
+                                        recording2.store(false, Ordering::Relaxed);
+                                        samples2.lock().unwrap().clear();
+                                        let _ = tx2.send(Event::VoiceCommand { command: cmd });
+                                        let _ = tx2.send(Event::RecordingCancelled {
+                                            session_id: sid.clone(),
+                                        });
+                                        break;
+                                    }
+                                }
+
                                 let _ = tx2.send(Event::PartialTranscript {
                                     session_id: sid.clone(),
                                     text,

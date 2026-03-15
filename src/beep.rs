@@ -50,6 +50,7 @@ pub async fn run(mut rx: EventReceiver, initial_voice_enabled: bool) {
             Ok(Event::PedalDown) => beep_down(),
             Ok(Event::PedalUp) => beep_up(),
             Ok(Event::RecordingCancelled { .. }) => beep_abort(),
+            Ok(Event::VoiceCommand { .. }) => play_sound("command-ack.wav"),
             Ok(Event::LlmDone { full_response, .. }) => {
                 if voice_enabled {
                     let truncated = commands::truncate_to_sentences(&full_response, 2);

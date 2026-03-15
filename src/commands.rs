@@ -158,14 +158,6 @@ pub fn parse_command(transcript: &str) -> Option<Command> {
         return Some(Command::Help);
     }
 
-    // Confirmation (for delete)
-    if matches!(text.as_str(), "yes" | "yeah" | "yep" | "confirm" | "do it") {
-        return Some(Command::ConfirmDelete);
-    }
-    if matches!(text.as_str(), "no" | "nope" | "cancel" | "never mind") {
-        return Some(Command::CancelDelete);
-    }
-
     None
 }
 
