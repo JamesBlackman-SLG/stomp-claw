@@ -33,7 +33,7 @@ pub enum Event {
     RecordingStarted { session_id: String },
     PartialTranscript { session_id: String, text: String },
     RecordingCancelled { session_id: String },
-    RecordingComplete { session_id: String, samples: Vec<f32> },
+    RecordingComplete { session_id: String, samples: Vec<f32>, duration_ms: u64 },
 
     // Transcription
     FinalTranscript { session_id: String, text: String },

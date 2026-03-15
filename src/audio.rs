@@ -86,6 +86,7 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver) {
 
     // Track current session for partial transcription
     let mut current_session_id = String::new();
+    let recording_start_time: Arc<Mutex<Option<std::time::Instant>>> = Arc::new(Mutex::new(None));
 
     loop {
         match rx.recv().await {
@@ -95,6 +96,7 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver) {
                 recording.store(true, Ordering::Relaxed);
 
                 let session_id = current_session_id.clone();
+                let start_time = std::time::Instant::now();
                 let _ = tx.send(Event::RecordingStarted { session_id: session_id.clone() });
 
                 // Spawn partial transcription loop
@@ -111,15 +113,15 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver) {
                         if start.elapsed().as_secs_f64() > 0.5 {
                             let snapshot = samples2.lock().unwrap().clone();
                             if let Some(text) = partial_transcribe(&snapshot, &client2).await {
-                                // Check for cancel keywords — clear buffer and let user keep talking
+                                // Check for cancel keywords — abort recording entirely
                                 if commands::is_cancel_keyword(&text) {
-                                    tracing::info!("Cancel keyword detected, resetting buffer: {}", text);
+                                    tracing::info!("Cancel keyword detected, aborting recording: {}", text);
+                                    recording2.store(false, Ordering::Relaxed);
                                     samples2.lock().unwrap().clear();
-                                    let _ = tx2.send(Event::PartialTranscript {
+                                    let _ = tx2.send(Event::RecordingCancelled {
                                         session_id: sid.clone(),
-                                        text: String::new(),
                                     });
-                                    continue;
+                                    break;
                                 }
                                 let _ = tx2.send(Event::PartialTranscript {
                                     session_id: sid.clone(),
@@ -129,15 +131,23 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver) {
                         }
                     }
                 });
+
+                // Store start time for duration calculation on pedal up
+                *recording_start_time.lock().unwrap() = Some(start_time);
             }
             Ok(Event::PedalUp) => {
                 let was_recording = recording.swap(false, Ordering::Relaxed);
                 if was_recording {
                     let captured = samples.lock().unwrap().clone();
+                    // Calculate recording duration
+                    let duration_ms = recording_start_time.lock().unwrap()
+                        .map(|t| t.elapsed().as_millis() as u64)
+                        .unwrap_or(0);
                     if !captured.is_empty() {
                         let _ = tx.send(Event::RecordingComplete {
                             session_id: current_session_id.clone(),
                             samples: captured,
+                            duration_ms,
                         });
                     }
                 }

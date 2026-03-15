@@ -50,30 +50,37 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver, pool: SqlitePool) {
 
     loop {
         match rx.recv().await {
-            Ok(Event::RecordingComplete { session_id, samples }) => {
+            Ok(Event::RecordingComplete { session_id, samples, duration_ms }) => {
                 tracing::info!("Transcribing {} samples for session {}", samples.len(), session_id);
                 match transcribe(&samples, &client).await {
                     Some(text) => {
-                        tracing::info!("Final transcript: {}", text);
+                        tracing::info!("Final transcript: {} ({}ms)", text, duration_ms);
 
-                        // Get session names for fuzzy matching
-                        let session_names: Vec<String> = db::get_sessions(&pool).await
-                            .unwrap_or_default()
-                            .iter()
-                            .map(|s| s.name.clone())
-                            .collect();
+                        // Only parse as voice command if recording was <= 2 seconds
+                        let is_command_window = duration_ms <= 2000;
 
-                        // Check for voice commands (including bare session name matching)
-                        if let Some(cmd) = commands::parse_command_with_sessions(&text, &session_names) {
-                            tracing::info!("Voice command detected: {:?}", cmd);
-                            let _ = tx.send(Event::VoiceCommand { command: cmd });
-                        } else {
-                            tracing::debug!("No command match for '{}' (sessions: {:?})", text, session_names);
-                            let _ = tx.send(Event::FinalTranscript {
-                                session_id,
-                                text,
-                            });
+                        if is_command_window {
+                            // Get session names for fuzzy matching
+                            let session_names: Vec<String> = db::get_sessions(&pool).await
+                                .unwrap_or_default()
+                                .iter()
+                                .map(|s| s.name.clone())
+                                .collect();
+
+                            // Check for voice commands (including bare session name matching)
+                            if let Some(cmd) = commands::parse_command_with_sessions(&text, &session_names) {
+                                tracing::info!("Voice command detected: {:?}", cmd);
+                                let _ = tx.send(Event::VoiceCommand { command: cmd });
+                                continue;
+                            }
                         }
+
+                        // Either not in command window, or no command matched — treat as regular transcript
+                        tracing::info!("Sending FinalTranscript to LLM: '{}' (command_window: {})", text, is_command_window);
+                        let _ = tx.send(Event::FinalTranscript {
+                            session_id,
+                            text,
+                        });
                     }
                     None => {
                         tracing::warn!("Empty transcript");

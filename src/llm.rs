@@ -194,6 +194,8 @@ async fn send_to_llm(
         return;
     }
 
+    tracing::info!("OpenClaw HTTP {}", resp.status());
+
     // Stream the response (Responses API SSE format)
     let mut full_reply = String::new();
     let mut stream = resp.bytes_stream();
@@ -247,7 +249,8 @@ async fn send_to_llm(
                     break;
                 }
 
-                if let Ok(evt) = serde_json::from_str::<ResponsesEvent>(data) {
+                match serde_json::from_str::<ResponsesEvent>(data) {
+                    Ok(evt) => {
                     if evt.event_type == "response.output_text.delta" {
                         if let Some(delta) = &evt.delta {
                             full_reply.push_str(delta);
@@ -267,6 +270,7 @@ async fn send_to_llm(
                             }
                         }
                     } else if evt.event_type == "response.completed" {
+                        tracing::info!("response.completed raw: {}", &data[..data.len().min(500)]);
                         if let Some(ref resp) = evt.response {
                             if let Some(ref u) = resp.usage {
                                 tracing::info!("Usage: input={}, output={}, total={}", u.input_tokens, u.output_tokens, u.total_tokens);
@@ -277,6 +281,10 @@ async fn send_to_llm(
                         stream_done = true;
                         break;
                     }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse SSE data: {} — raw: {}", e, &data[..data.len().min(200)]);
+                    }
                 }
             }
         }
@@ -284,6 +292,7 @@ async fn send_to_llm(
 
     if full_reply.is_empty() {
         let error = "Empty response from OpenClaw".to_string();
+        tracing::warn!("{}", error);
         let _ = db::error_turn(pool, assistant_turn_id, &error).await;
         let _ = tx.send(Event::LlmError {
             session_id: session_id.to_string(),
@@ -321,6 +330,7 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver, pool: SqlitePool) {
     loop {
         match rx.recv().await {
             Ok(Event::FinalTranscript { session_id, text }) => {
+                tracing::info!("LLM: Received FinalTranscript: '{}'", text);
                 let tx = tx.clone();
                 let pool = pool.clone();
                 let client = client.clone();
