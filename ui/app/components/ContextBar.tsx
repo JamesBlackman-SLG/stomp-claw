@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { useAppState } from '../lib/state'
 
 function formatTokens(n: number): string {
@@ -5,7 +6,7 @@ function formatTokens(n: number): string {
   return String(n)
 }
 
-export function ContextBar() {
+export const ContextBar = memo(function ContextBar() {
   const { totalTokens, contextWindow } = useAppState()
 
   if (totalTokens == null || contextWindow == null) return null
@@ -31,4 +32,4 @@ export function ContextBar() {
       <span className="text-text-dim">{pct.toFixed(0)}%</span>
     </div>
   )
-}
+})

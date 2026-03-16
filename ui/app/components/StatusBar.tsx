@@ -1,6 +1,7 @@
+import { memo } from 'react'
 import { useAppState, useWs } from '../lib/state'
 
-export function StatusBar() {
+export const StatusBar = memo(function StatusBar() {
   const { thinking, voiceEnabled } = useAppState()
   const ws = useWs()
 
@@ -15,4 +16,4 @@ export function StatusBar() {
       </button>
     </div>
   )
-}
+})

@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type { Turn } from '../lib/types'
 
@@ -5,7 +6,7 @@ function localFileUrl(path: string): string {
   return `/local-file?path=${encodeURIComponent(path)}`
 }
 
-export function MessageBubble({ turn }: { turn: Turn }) {
+export const MessageBubble = memo(function MessageBubble({ turn }: { turn: Turn }) {
   const isUser = turn.role === 'user'
   const images = turn.images
     ? (typeof turn.images === 'string' ? JSON.parse(turn.images) : turn.images) as string[]
@@ -64,4 +65,4 @@ export function MessageBubble({ turn }: { turn: Turn }) {
       </div>
     </div>
   )
-}
+})

@@ -1,10 +1,10 @@
-import { useEffect } from 'react'
+import { useEffect, memo } from 'react'
 
 interface HelpModalProps {
   onClose: () => void
 }
 
-export function HelpModal({ onClose }: HelpModalProps) {
+export const HelpModal = memo(function HelpModal({ onClose }: HelpModalProps) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -55,7 +55,7 @@ export function HelpModal({ onClose }: HelpModalProps) {
       </div>
     </div>
   )
-}
+})
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (

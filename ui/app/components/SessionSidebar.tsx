@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { useAppState, useWs, useDispatch } from '../lib/state'
 
-export function SessionSidebar() {
+export const SessionSidebar = memo(function SessionSidebar() {
   const { sessions, activeSessionId, sidebarOpen } = useAppState()
   const ws = useWs()
   const dispatch = useDispatch()
@@ -114,4 +114,4 @@ export function SessionSidebar() {
       )}
     </>
   )
-}
+})

@@ -52,6 +52,8 @@ pub fn openclaw_context_window() -> u32 {
 fn model_context_window(model_id: &str) -> u32 {
     match model_id {
         s if s.contains("MiniMax-M2.5") => 1_000_000,
+        s if s.contains("claude-opus-4-6") => 1_000_000,
+        s if s.contains("claude-sonnet-4-6") => 1_000_000,
         s if s.contains("claude-opus") => 200_000,
         s if s.contains("claude-sonnet") => 200_000,
         s if s.contains("claude-haiku") => 200_000,
