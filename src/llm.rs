@@ -7,6 +7,51 @@ use crate::config;
 use crate::db;
 use crate::events::{Event, EventSender, EventReceiver};
 
+/// Extract text content from a .pptx file (which is a ZIP of XML slides).
+fn extract_pptx_text(bytes: &[u8]) -> Result<String, String> {
+    use std::io::Read;
+    let cursor = std::io::Cursor::new(bytes);
+    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| format!("Not a valid zip/pptx: {}", e))?;
+
+    // Collect slide filenames and sort by slide number
+    let mut slide_names: Vec<String> = (0..archive.len())
+        .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
+        .filter(|name| name.starts_with("ppt/slides/slide") && name.ends_with(".xml"))
+        .collect();
+    slide_names.sort();
+
+    let mut output = String::new();
+    for (i, name) in slide_names.iter().enumerate() {
+        let mut file = archive.by_name(name).map_err(|e| format!("Can't read {}: {}", name, e))?;
+        let mut xml = String::new();
+        file.read_to_string(&mut xml).map_err(|e| format!("Read error {}: {}", name, e))?;
+
+        // Extract text from <a:t>...</a:t> tags (DrawingML text runs)
+        let mut slide_text = String::new();
+        for chunk in xml.split("<a:t") {
+            if let Some(rest) = chunk.strip_prefix(">").or_else(|| {
+                // Handle <a:t xml:space="preserve"> etc
+                chunk.find('>').map(|pos| &chunk[pos + 1..])
+            }) {
+                if let Some(text) = rest.split("</a:t>").next() {
+                    if !text.is_empty() {
+                        if !slide_text.is_empty() { slide_text.push(' '); }
+                        slide_text.push_str(text);
+                    }
+                }
+            }
+        }
+        if !slide_text.is_empty() {
+            if !output.is_empty() { output.push_str("\n\n"); }
+            output.push_str(&format!("--- Slide {} ---\n{}", i + 1, slide_text));
+        }
+    }
+    if output.is_empty() {
+        return Err("No text content found in pptx".to_string());
+    }
+    Ok(output)
+}
+
 /// Usage data from the Responses API response.completed event
 #[derive(Deserialize, Clone, Debug)]
 struct UsageData {
@@ -124,15 +169,32 @@ async fn send_to_llm(
             if let Ok(bytes) = tokio::fs::read(doc_path).await {
                 let ext = std::path::Path::new(doc_path)
                     .extension().and_then(|e| e.to_str()).unwrap_or("txt");
-                let media_type = match ext {
-                    "pdf" => "application/pdf",
-                    "csv" => "text/csv",
-                    "json" => "application/json",
-                    "html" => "text/html",
-                    "md" => "text/markdown",
-                    _ => "text/plain",
+
+                // Convert pptx to extracted text since OpenClaw can't process raw pptx
+                let (send_bytes, media_type) = if ext == "pptx" {
+                    match extract_pptx_text(&bytes) {
+                        Ok(text) => {
+                            tracing::info!("Extracted {} chars from pptx: {}", text.len(), filename);
+                            (text.into_bytes(), "text/plain")
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to extract pptx text: {}", e);
+                            (bytes, "text/plain")
+                        }
+                    }
+                } else {
+                    let mt = match ext {
+                        "pdf" => "application/pdf",
+                        "csv" => "text/csv",
+                        "json" => "application/json",
+                        "html" => "text/html",
+                        "md" => "text/markdown",
+                        _ => "text/plain",
+                    };
+                    (bytes, mt)
                 };
-                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&send_bytes);
                 user_parts.push(serde_json::json!({
                     "type": "input_file",
                     "source": { "type": "base64", "media_type": media_type, "data": b64, "filename": filename }

@@ -18,9 +18,10 @@ const DOCUMENT_TYPES = [
   'application/json',
   'text/html',
   'text/markdown',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 ]
 
-const DOCUMENT_EXTENSIONS = ['.pdf', '.csv', '.txt', '.json', '.html', '.md']
+const DOCUMENT_EXTENSIONS = ['.pdf', '.csv', '.txt', '.json', '.html', '.md', '.pptx']
 
 const MAX_DOC_SIZE = 5 * 1024 * 1024 // 5MB
 
@@ -244,7 +245,7 @@ export function TextInput() {
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,.pdf,.csv,.txt,.json,.html,.md"
+          accept="image/*,.pdf,.csv,.txt,.json,.html,.md,.pptx"
           multiple
           className="hidden"
           onChange={e => {

@@ -97,7 +97,7 @@ async fn local_file_handler(
         .and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
     let allowed = matches!(ext.as_str(),
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" |
-        "pdf" | "csv" | "txt" | "json" | "html" | "md"
+        "pdf" | "csv" | "txt" | "json" | "html" | "md" | "pptx"
     );
     if !allowed {
         return (axum::http::StatusCode::FORBIDDEN, "File type not allowed").into_response();
@@ -105,7 +105,7 @@ async fn local_file_handler(
     match tokio::fs::read(&canonical).await {
         Ok(data) => {
             let mime = mime_guess::from_path(&canonical).first_or_octet_stream();
-            if matches!(ext.as_str(), "pdf" | "csv" | "txt" | "json" | "html" | "md") {
+            if matches!(ext.as_str(), "pdf" | "csv" | "txt" | "json" | "html" | "md" | "pptx") {
                 let filename = canonical.file_name()
                     .and_then(|n| n.to_str()).unwrap_or("download");
                 (
@@ -520,6 +520,7 @@ fn save_document(data_url: &str, original_filename: &str, dir: &std::path::Path)
         else if header.contains("text/html") { "html" }
         else if header.contains("text/markdown") { "md" }
         else if header.contains("text/plain") { "txt" }
+        else if header.contains("presentationml.presentation") { "pptx" }
         else {
             std::path::Path::new(original_filename)
                 .extension().and_then(|e| e.to_str()).unwrap_or("txt")
