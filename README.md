@@ -115,9 +115,36 @@ When **disabled**: full responses up to 2000 tokens, text only.
 | Service | Address | Purpose |
 |---------|---------|---------|
 | NeMo | `localhost:5051` | Speech-to-text (multipart WAV upload) |
-| OpenClaw | `127.0.0.1:18789` | OpenAI-compatible streaming LLM API |
+| OpenClaw | `127.0.0.1:18789` | OpenAI-compatible streaming LLM API (Responses API) |
 | paplay | PulseAudio | Audio feedback (beeps) |
 | ~/bin/speak | Custom binary | Text-to-speech output |
+
+## OpenClaw Image Support
+
+For image uploads to work, your Claude model entries in `~/.openclaw/openclaw.json` **must** include `"input": ["text", "image"]`. Without this, OpenClaw silently drops images before they reach the LLM.
+
+```json
+{
+  "models": {
+    "providers": {
+      "anthropic": {
+        "baseUrl": "https://api.anthropic.com",
+        "models": [
+          {
+            "id": "claude-opus-4-6",
+            "name": "Claude Opus 4.6",
+            "input": ["text", "image"],
+            "contextWindow": 1000000,
+            "maxTokens": 128000
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+This applies to all Claude model entries (including `anthropic/claude-opus-4-6`, `claude-sonnet-4-6`, etc.). OpenClaw's built-in model catalog doesn't set this automatically for user-configured Anthropic models. After updating, restart the gateway with `openclaw gateway restart`.
 
 ## Project Structure
 
