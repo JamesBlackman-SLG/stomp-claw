@@ -75,6 +75,9 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let _ = sqlx::query("ALTER TABLE turns ADD COLUMN documents TEXT")
         .execute(pool).await;
 
+    let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN deleted_at TEXT")
+        .execute(pool).await;
+
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS config (
             key TEXT PRIMARY KEY,
@@ -93,7 +96,7 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 // --- Session CRUD ---
 
 pub async fn get_sessions(pool: &SqlitePool) -> Result<Vec<Session>, sqlx::Error> {
-    let rows = sqlx::query("SELECT id, name, created_at, last_used FROM sessions ORDER BY last_used DESC")
+    let rows = sqlx::query("SELECT id, name, created_at, last_used FROM sessions WHERE deleted_at IS NULL ORDER BY last_used DESC")
         .fetch_all(pool).await?;
     Ok(rows.iter().map(|r| Session {
         id: r.get("id"),
@@ -104,7 +107,7 @@ pub async fn get_sessions(pool: &SqlitePool) -> Result<Vec<Session>, sqlx::Error
 }
 
 pub async fn get_session(pool: &SqlitePool, id: &str) -> Result<Option<Session>, sqlx::Error> {
-    let row = sqlx::query("SELECT id, name, created_at, last_used FROM sessions WHERE id = ?")
+    let row = sqlx::query("SELECT id, name, created_at, last_used FROM sessions WHERE id = ? AND deleted_at IS NULL")
         .bind(id)
         .fetch_optional(pool).await?;
     Ok(row.map(|r| Session {
@@ -134,7 +137,9 @@ pub async fn rename_session(pool: &SqlitePool, id: &str, name: &str) -> Result<(
 }
 
 pub async fn delete_session(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM sessions WHERE id = ?")
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query("UPDATE sessions SET deleted_at = ? WHERE id = ?")
+        .bind(&now)
         .bind(id)
         .execute(pool).await?;
     Ok(())

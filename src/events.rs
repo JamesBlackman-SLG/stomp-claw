@@ -15,7 +15,6 @@ pub enum Command {
     SwitchSession(String),
     ListSessions,
     RenameSession(String),
-    DeleteSession,
     VoiceOn,
     VoiceOff,
     Help,

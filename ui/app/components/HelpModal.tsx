@@ -30,8 +30,7 @@ export const HelpModal = memo(function HelpModal({ onClose }: HelpModalProps) {
           <Row cmd='switch to <name>' desc="Switch to a session by name" />
           <Row cmd="<codename>" desc="Say a session codename directly to switch" />
           <Row cmd='rename session <name>' desc="Rename the current session" />
-          <Row cmd="delete session" desc="Delete the current session" />
-          <Aliases>new conversation, reset session, clear context, start over, fresh start, show sessions, go to session, name session, remove session</Aliases>
+          <Aliases>new conversation, reset session, clear context, start over, fresh start, show sessions, go to session, name session</Aliases>
         </Section>
 
         <Section title="Voice Control">

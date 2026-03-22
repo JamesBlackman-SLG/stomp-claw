@@ -121,10 +121,6 @@ pub fn parse_command(transcript: &str) -> Option<Command> {
         return Some(Command::ListSessions);
     }
 
-    if text.contains("delete session") || text.contains("remove session") {
-        return Some(Command::DeleteSession);
-    }
-
     // Switch session (extract query after keyword)
     for prefix in &["switch session", "go to session", "switch to"] {
         if let Some(rest) = text.strip_prefix(prefix) {

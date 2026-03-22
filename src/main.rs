@@ -178,26 +178,6 @@ async fn handle_voice_commands(
                             let _ = tx.send(events::Event::SessionRenamed { session_id: id, name: new_name });
                         }
                     }
-                    events::Command::DeleteSession => {
-                        tracing::info!("Delete session requested");
-                        if let Some(id) = db::get_active_session_id(&pool).await.ok().flatten() {
-                            let session_name = db::get_session(&pool, &id).await
-                                .ok().flatten()
-                                .map(|s| s.name)
-                                .unwrap_or_default();
-                            let _ = db::delete_session(&pool, &id).await;
-                            let _ = tx.send(events::Event::SessionDeleted { session_id: id });
-                            beep::speak(&format!("Deleted {}", session_name));
-                            // Switch to another session or create new
-                            let remaining = db::get_sessions(&pool).await.unwrap_or_default();
-                            if let Some(next) = remaining.first() {
-                                let _ = db::set_active_session_id(&pool, &next.id).await;
-                                let _ = tx.send(events::Event::SessionSwitched { session_id: next.id.clone() });
-                            } else {
-                                let _ = tx.send(events::Event::VoiceCommand { command: events::Command::NewSession });
-                            }
-                        }
-                    }
                     events::Command::VoiceOn => {
                         let _ = db::set_config(&pool, "voice_enabled", "true").await;
                         let _ = tx.send(events::Event::VoiceToggled { enabled: true });
