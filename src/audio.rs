@@ -37,7 +37,7 @@ async fn partial_transcribe(samples: &[f32], client: &Client) -> Option<String> 
         .mime_str("audio/wav").ok()?;
     let form = reqwest::multipart::Form::new().part("file", part);
 
-    let resp = client.post(&format!("{}/transcribe/", config::NEMO_URL))
+    let resp = client.post(format!("{}/transcribe/", config::NEMO_URL))
         .multipart(form)
         .send().await.ok()?;
 

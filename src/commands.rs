@@ -50,8 +50,8 @@ fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     let mut matrix = vec![vec![0usize; b.len() + 1]; a.len() + 1];
-    for i in 0..=a.len() { matrix[i][0] = i; }
-    for j in 0..=b.len() { matrix[0][j] = j; }
+    for (i, row) in matrix.iter_mut().enumerate().take(a.len() + 1) { row[0] = i; }
+    for (j, val) in matrix[0].iter_mut().enumerate().take(b.len() + 1) { *val = j; }
     for i in 1..=a.len() {
         for j in 1..=b.len() {
             let cost = if a[i-1] == b[j-1] { 0 } else { 1 };
@@ -97,10 +97,9 @@ pub fn parse_command_with_sessions(transcript: &str, session_names: &[String]) -
 
     // Then try bare session name fuzzy match (e.g. just saying "arctic pebble")
     let text = strip_punctuation(&transcript.trim().to_lowercase());
-    if !text.is_empty() {
-        if let Some(matched) = fuzzy_match_session(&text, session_names) {
+    if !text.is_empty()
+        && let Some(matched) = fuzzy_match_session(&text, session_names) {
             return Some(Command::SwitchSession(matched));
-        }
     }
 
     None
@@ -167,13 +166,11 @@ pub fn is_cancel_keyword(text: &str) -> bool {
 
 pub fn truncate_to_sentences(text: &str, max_sentences: usize) -> String {
     let mut count = 0;
-    let mut end = 0;
     for (i, c) in text.char_indices() {
         if c == '.' || c == '!' || c == '?' {
             count += 1;
-            end = i + c.len_utf8();
             if count >= max_sentences {
-                return text[..end].trim().to_string();
+                return text[..i + c.len_utf8()].trim().to_string();
             }
         }
     }

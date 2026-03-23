@@ -32,13 +32,12 @@ fn extract_pptx_text(bytes: &[u8]) -> Result<String, String> {
             if let Some(rest) = chunk.strip_prefix(">").or_else(|| {
                 // Handle <a:t xml:space="preserve"> etc
                 chunk.find('>').map(|pos| &chunk[pos + 1..])
-            }) {
-                if let Some(text) = rest.split("</a:t>").next() {
-                    if !text.is_empty() {
-                        if !slide_text.is_empty() { slide_text.push(' '); }
-                        slide_text.push_str(text);
-                    }
-                }
+            })
+                && let Some(text) = rest.split("</a:t>").next()
+                && !text.is_empty()
+            {
+                if !slide_text.is_empty() { slide_text.push(' '); }
+                slide_text.push_str(text);
             }
         }
         if !slide_text.is_empty() {
@@ -75,6 +74,7 @@ struct ResponsesEvent {
     response: Option<ResponseObject>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_to_llm(
     tx: &EventSender,
     pool: &SqlitePool,
@@ -326,18 +326,17 @@ async fn send_to_llm(
                             });
 
                             // Debounced DB update: every 10 tokens or 500ms
-                            if token_count % 10 == 0 || last_db_update.elapsed().as_millis() > 500 {
+                            if token_count.is_multiple_of(10) || last_db_update.elapsed().as_millis() > 500 {
                                 let _ = db::update_turn_content(pool, assistant_turn_id, &full_reply).await;
                                 last_db_update = std::time::Instant::now();
                             }
                         }
                     } else if evt.event_type == "response.completed" {
                         tracing::info!("response.completed raw: {}", &data[..data.len().min(500)]);
-                        if let Some(ref resp) = evt.response {
-                            if let Some(ref u) = resp.usage {
+                        if let Some(ref resp) = evt.response
+                            && let Some(ref u) = resp.usage {
                                 tracing::info!("Usage: input={}, output={}, total={}", u.input_tokens, u.output_tokens, u.total_tokens);
                                 usage = Some(u.clone());
-                            }
                         }
                         tracing::info!("Received response.completed");
                         stream_done = true;

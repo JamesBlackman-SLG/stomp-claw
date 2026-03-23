@@ -23,7 +23,6 @@ fn play_sound(filename: &str) {
 pub fn beep_down() { play_sound("beep-down.wav"); }
 pub fn beep_up() { play_sound("beep-up.wav"); }
 pub fn beep_abort() { play_sound("beep-abort.wav"); }
-pub fn beep_busy() { play_sound("beep-busy.wav"); }
 pub fn notify() { play_sound("notify.wav"); }
 
 pub fn speak(text: &str) {
@@ -38,7 +37,7 @@ pub fn speak(text: &str) {
 }
 
 pub fn play_session_tone(index: usize) {
-    let file = if index % 2 == 0 { "beep-up.wav" } else { "beep-up2.wav" };
+    let file = if index.is_multiple_of(2) { "beep-up.wav" } else { "beep-up2.wav" };
     play_sound(file);
 }
 

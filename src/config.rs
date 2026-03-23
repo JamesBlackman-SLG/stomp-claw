@@ -73,6 +73,3 @@ pub fn db_path() -> PathBuf {
     base_dir().join("stomp-claw.db")
 }
 
-pub fn log_path() -> PathBuf {
-    base_dir().join("stomp-claw.log")
-}

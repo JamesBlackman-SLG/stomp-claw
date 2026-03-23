@@ -106,18 +106,6 @@ pub async fn get_sessions(pool: &SqlitePool) -> Result<Vec<Session>, sqlx::Error
     }).collect())
 }
 
-pub async fn get_session(pool: &SqlitePool, id: &str) -> Result<Option<Session>, sqlx::Error> {
-    let row = sqlx::query("SELECT id, name, created_at, last_used FROM sessions WHERE id = ? AND deleted_at IS NULL")
-        .bind(id)
-        .fetch_optional(pool).await?;
-    Ok(row.map(|r| Session {
-        id: r.get("id"),
-        name: r.get("name"),
-        created_at: r.get("created_at"),
-        last_used: r.get("last_used"),
-    }))
-}
-
 pub async fn create_session(pool: &SqlitePool, session: &Session) -> Result<(), sqlx::Error> {
     sqlx::query("INSERT INTO sessions (id, name, created_at, last_used) VALUES (?, ?, ?, ?)")
         .bind(&session.id)
@@ -159,24 +147,6 @@ pub async fn touch_session(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Erro
 pub async fn get_turns(pool: &SqlitePool, session_id: &str) -> Result<Vec<Turn>, sqlx::Error> {
     let rows = sqlx::query("SELECT id, session_id, role, content, status, created_at, completed_at, images, documents FROM turns WHERE session_id = ? ORDER BY id")
         .bind(session_id)
-        .fetch_all(pool).await?;
-    Ok(rows.iter().map(|r| Turn {
-        id: r.get("id"),
-        session_id: r.get("session_id"),
-        role: r.get("role"),
-        content: r.get("content"),
-        status: r.get("status"),
-        created_at: r.get("created_at"),
-        completed_at: r.get("completed_at"),
-        images: r.get("images"),
-        documents: r.get("documents"),
-    }).collect())
-}
-
-pub async fn get_turns_after(pool: &SqlitePool, session_id: &str, after_id: i64) -> Result<Vec<Turn>, sqlx::Error> {
-    let rows = sqlx::query("SELECT id, session_id, role, content, status, created_at, completed_at, images, documents FROM turns WHERE session_id = ? AND id > ? ORDER BY id")
-        .bind(session_id)
-        .bind(after_id)
         .fetch_all(pool).await?;
     Ok(rows.iter().map(|r| Turn {
         id: r.get("id"),

@@ -37,7 +37,6 @@ enum WsOutgoing {
     SessionRenamed { session_id: String, name: String },
     SessionDeleted { session_id: String },
     TurnList { session_id: String, turns: Vec<db::Turn> },
-    TurnCreated { turn: db::Turn },
     RecordingStarted { session_id: String },
     RecordingCancelled { session_id: String },
     PartialTranscript { session_id: String, text: String },
@@ -192,7 +191,7 @@ pub async fn run(tx: EventSender, _rx: EventReceiver, pool: SqlitePool) {
             use rustls_pemfile::{certs, pkcs8_private_keys};
 
             let cert_file = std::fs::File::open(&cert_path).expect("Failed to open cert");
-            let key_file = std::fs::File::open(&key_path).expect("Failed to open key");
+            let _key_file = std::fs::File::open(&key_path).expect("Failed to open key");
 
             let certs: Vec<_> = certs(&mut BufReader::new(cert_file))
                 .collect::<Result<Vec<_>, _>>()
@@ -448,10 +447,9 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                         Event::FinalTranscript { .. } => None,
                         _ => None,
                     };
-                    if let Some(msg) = msg {
-                        if send_ws(&mut forward_tx, &msg).await.is_err() {
+                    if let Some(msg) = msg
+                        && send_ws(&mut forward_tx, &msg).await.is_err() {
                             break;
-                        }
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -466,10 +464,9 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
     let tx = state.tx.clone();
     let pool = state.pool.clone();
     while let Some(Ok(msg)) = ws_rx.next().await {
-        if let Message::Text(text) = msg {
-            if let Ok(incoming) = serde_json::from_str::<WsIncoming>(&text) {
+        if let Message::Text(text) = msg
+            && let Ok(incoming) = serde_json::from_str::<WsIncoming>(&text) {
                 handle_ws_message(incoming, &tx, &pool).await;
-            }
         }
     }
 
