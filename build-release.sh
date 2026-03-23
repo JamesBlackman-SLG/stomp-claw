@@ -9,4 +9,6 @@ cd ..
 echo "Building Rust binary..."
 cargo build --release
 
-echo "Done! Binary at ./target/release/stomp_claw"
+echo "Build complete. Restarting..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"$SCRIPT_DIR/start.sh"

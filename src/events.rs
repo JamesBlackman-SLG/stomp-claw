@@ -50,6 +50,9 @@ pub enum Event {
     SessionRenamed { session_id: String, name: String },
     SessionDeleted { session_id: String },
 
+    // Turn
+    TurnDeleted { session_id: String, turn_id: i64 },
+
     // Config
     VoiceToggled { enabled: bool },
 

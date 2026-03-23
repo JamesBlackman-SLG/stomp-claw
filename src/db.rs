@@ -215,6 +215,13 @@ pub async fn error_turn(pool: &SqlitePool, turn_id: i64, content: &str) -> Resul
     Ok(())
 }
 
+pub async fn delete_turn(pool: &SqlitePool, turn_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM turns WHERE id = ?")
+        .bind(turn_id)
+        .execute(pool).await?;
+    Ok(())
+}
+
 // --- Config ---
 
 pub async fn get_config(pool: &SqlitePool, key: &str) -> Result<Option<String>, sqlx::Error> {

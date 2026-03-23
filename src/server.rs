@@ -65,6 +65,7 @@ enum WsIncoming {
     CreateSession,
     RenameSession { session_id: String, name: String },
     DeleteSession { session_id: String },
+    DeleteMessage { session_id: String, turn_id: i64 },
     CancelRecording,
     ToggleVoice,
 }
@@ -441,6 +442,15 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             Some(WsOutgoing::SessionRenamed { session_id, name }),
                         Event::SessionDeleted { session_id } =>
                             Some(WsOutgoing::SessionDeleted { session_id }),
+                        Event::TurnDeleted { session_id, turn_id: _ } => {
+                            if let Ok(turns) = db::get_turns(&pool, &session_id).await {
+                                let _ = send_ws(&mut forward_tx, &WsOutgoing::TurnList {
+                                    session_id: session_id.clone(),
+                                    turns,
+                                }).await;
+                            }
+                            None
+                        }
                         Event::VoiceToggled { enabled } =>
                             Some(WsOutgoing::VoiceToggled { enabled }),
                         Event::ShowHelp => Some(WsOutgoing::ShowHelp),
@@ -625,6 +635,12 @@ async fn handle_ws_message(msg: WsIncoming, tx: &EventSender, pool: &SqlitePool)
                 });
                 let _ = tx.send(Event::SessionSwitched { session_id: session.id });
             }
+        }
+        WsIncoming::DeleteMessage { session_id, turn_id } => {
+            let _ = db::delete_turn(pool, turn_id).await;
+            // Clear response chain — next message will start fresh context with OpenClaw
+            let _ = db::set_config(pool, &format!("prev_response_id:{}", session_id), "").await;
+            let _ = tx.send(Event::TurnDeleted { session_id, turn_id });
         }
         WsIncoming::CancelRecording => {
             let _ = tx.send(Event::CancelRecording);
