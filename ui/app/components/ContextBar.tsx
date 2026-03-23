@@ -7,7 +7,7 @@ function formatTokens(n: number): string {
 }
 
 export const ContextBar = memo(function ContextBar() {
-  const { totalTokens, contextWindow } = useAppState()
+  const { totalTokens, contextWindow, activeSessionId } = useAppState()
 
   if (totalTokens == null || contextWindow == null) return null
 
@@ -29,6 +29,7 @@ export const ContextBar = memo(function ContextBar() {
           {formatTokens(totalTokens)} / {formatTokens(contextWindow)} context
         </span>
       </div>
+      {activeSessionId && <span className="text-text-dim opacity-60 truncate max-w-48">{activeSessionId}</span>}
       <span className="text-text-dim">{pct.toFixed(0)}%</span>
     </div>
   )

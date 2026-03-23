@@ -62,6 +62,7 @@ struct UsageData {
 /// Inner response object (from response.completed)
 #[derive(Deserialize)]
 struct ResponseObject {
+    id: Option<String>,
     usage: Option<UsageData>,
 }
 
@@ -205,8 +206,12 @@ async fn send_to_llm(
 
 
 
+    // Load previous response ID for conversation chaining
+    let prev_response_id = db::get_config(pool, &format!("prev_response_id:{}", session_id))
+        .await.ok().flatten();
+
     // Build Responses API payload
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "model": "openclaw",
         "instructions": system_prompt,
         "input": [
@@ -217,14 +222,21 @@ async fn send_to_llm(
             }
         ],
         "stream": true,
+        "store": true,
         "max_output_tokens": max_tokens,
         "user": "stomp-claw"
     });
+    if let Some(ref prev_id) = prev_response_id {
+        payload.as_object_mut().unwrap().insert(
+            "previous_response_id".to_string(),
+            serde_json::Value::String(prev_id.clone()),
+        );
+    }
 
     let resp = match client.post(config::OPENCLAW_URL)
         .header("Authorization", format!("Bearer {}", config::openclaw_token()))
         .header("Content-Type", "application/json")
-        .header("x-openclaw-session-key", session_id)
+        .header("x-openclaw-session-key", format!("agent:main:{}", session_id))
         .json(&payload)
         .send().await
     {
@@ -333,10 +345,16 @@ async fn send_to_llm(
                         }
                     } else if evt.event_type == "response.completed" {
                         tracing::info!("response.completed raw: {}", &data[..data.len().min(500)]);
-                        if let Some(ref resp) = evt.response
-                            && let Some(ref u) = resp.usage {
+                        if let Some(ref resp) = evt.response {
+                            // Save response ID for conversation chaining
+                            if let Some(ref id) = resp.id {
+                                tracing::info!("Saving response ID for session {}: {}", session_id, id);
+                                let _ = db::set_config(pool, &format!("prev_response_id:{}", session_id), id).await;
+                            }
+                            if let Some(ref u) = resp.usage {
                                 tracing::info!("Usage: input={}, output={}, total={}", u.input_tokens, u.output_tokens, u.total_tokens);
                                 usage = Some(u.clone());
+                            }
                         }
                         tracing::info!("Received response.completed");
                         stream_done = true;
