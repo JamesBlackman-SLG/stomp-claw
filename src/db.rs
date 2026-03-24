@@ -22,6 +22,7 @@ pub struct Turn {
     pub completed_at: Option<String>,
     pub images: Option<String>,
     pub documents: Option<String>,
+    pub response_id: Option<String>,
 }
 
 pub async fn create_pool() -> Result<SqlitePool, sqlx::Error> {
@@ -76,6 +77,9 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .execute(pool).await;
 
     let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN deleted_at TEXT")
+        .execute(pool).await;
+
+    let _ = sqlx::query("ALTER TABLE turns ADD COLUMN response_id TEXT")
         .execute(pool).await;
 
     sqlx::query(
@@ -145,7 +149,7 @@ pub async fn touch_session(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Erro
 // --- Turn CRUD ---
 
 pub async fn get_turns(pool: &SqlitePool, session_id: &str) -> Result<Vec<Turn>, sqlx::Error> {
-    let rows = sqlx::query("SELECT id, session_id, role, content, status, created_at, completed_at, images, documents FROM turns WHERE session_id = ? ORDER BY id")
+    let rows = sqlx::query("SELECT id, session_id, role, content, status, created_at, completed_at, images, documents, response_id FROM turns WHERE session_id = ? ORDER BY id")
         .bind(session_id)
         .fetch_all(pool).await?;
     Ok(rows.iter().map(|r| Turn {
@@ -158,6 +162,7 @@ pub async fn get_turns(pool: &SqlitePool, session_id: &str) -> Result<Vec<Turn>,
         completed_at: r.get("completed_at"),
         images: r.get("images"),
         documents: r.get("documents"),
+        response_id: r.get("response_id"),
     }).collect())
 }
 
@@ -213,6 +218,41 @@ pub async fn error_turn(pool: &SqlitePool, turn_id: i64, content: &str) -> Resul
         .bind(turn_id)
         .execute(pool).await?;
     Ok(())
+}
+
+pub async fn set_turn_response_id(pool: &SqlitePool, turn_id: i64, response_id: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE turns SET response_id = ? WHERE id = ?")
+        .bind(response_id)
+        .bind(turn_id)
+        .execute(pool).await?;
+    Ok(())
+}
+
+pub async fn get_turn(pool: &SqlitePool, turn_id: i64) -> Result<Option<Turn>, sqlx::Error> {
+    let row = sqlx::query("SELECT id, session_id, role, content, status, created_at, completed_at, images, documents, response_id FROM turns WHERE id = ?")
+        .bind(turn_id)
+        .fetch_optional(pool).await?;
+    Ok(row.map(|r| Turn {
+        id: r.get("id"),
+        session_id: r.get("session_id"),
+        role: r.get("role"),
+        content: r.get("content"),
+        status: r.get("status"),
+        created_at: r.get("created_at"),
+        completed_at: r.get("completed_at"),
+        images: r.get("images"),
+        documents: r.get("documents"),
+        response_id: r.get("response_id"),
+    }))
+}
+
+/// Get the response_id of the most recent assistant turn before the given turn_id
+pub async fn get_prev_assistant_response_id(pool: &SqlitePool, session_id: &str, before_turn_id: i64) -> Result<Option<String>, sqlx::Error> {
+    let row = sqlx::query("SELECT response_id FROM turns WHERE session_id = ? AND id < ? AND role = 'assistant' AND response_id IS NOT NULL ORDER BY id DESC LIMIT 1")
+        .bind(session_id)
+        .bind(before_turn_id)
+        .fetch_optional(pool).await?;
+    Ok(row.and_then(|r| r.get("response_id")))
 }
 
 pub async fn delete_turn(pool: &SqlitePool, turn_id: i64) -> Result<(), sqlx::Error> {

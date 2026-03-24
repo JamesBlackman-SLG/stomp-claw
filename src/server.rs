@@ -637,9 +637,32 @@ async fn handle_ws_message(msg: WsIncoming, tx: &EventSender, pool: &SqlitePool)
             }
         }
         WsIncoming::DeleteMessage { session_id, turn_id } => {
+            // Look up the turn to get its response_id before deleting
+            let turn = db::get_turn(pool, turn_id).await.ok().flatten();
+
+            // Delete from OpenClaw if this turn has a response_id
+            if let Some(resp_id) = turn.as_ref().and_then(|t| t.response_id.clone()) {
+                let url = format!("http://127.0.0.1:18789/v1/responses/{}", resp_id);
+                let token = app_config::openclaw_token();
+                tokio::spawn(async move {
+                    let client = reqwest::Client::new();
+                    match client.delete(&url)
+                        .header("Authorization", format!("Bearer {}", token))
+                        .send().await
+                    {
+                        Ok(r) => tracing::info!("Deleted response {} from OpenClaw: {}", resp_id, r.status()),
+                        Err(e) => tracing::warn!("Failed to delete response {} from OpenClaw: {}", resp_id, e),
+                    }
+                });
+            }
+
+            // Update prev_response_id to the previous assistant turn's response_id
+            // (so the chain continues from the turn before the deleted one)
+            let prev_resp = db::get_prev_assistant_response_id(pool, &session_id, turn_id)
+                .await.ok().flatten().unwrap_or_default();
+            let _ = db::set_config(pool, &format!("prev_response_id:{}", session_id), &prev_resp).await;
+
             let _ = db::delete_turn(pool, turn_id).await;
-            // Clear response chain — next message will start fresh context with OpenClaw
-            let _ = db::set_config(pool, &format!("prev_response_id:{}", session_id), "").await;
             let _ = tx.send(Event::TurnDeleted { session_id, turn_id });
         }
         WsIncoming::CancelRecording => {

@@ -6,7 +6,7 @@ function localFileUrl(path: string): string {
   return `/local-file?path=${encodeURIComponent(path)}`
 }
 
-export const MessageBubble = memo(function MessageBubble({ turn }: { turn: Turn }) {
+export const MessageBubble = memo(function MessageBubble({ turn, onDelete }: { turn: Turn; onDelete?: (turnId: number) => void }) {
   const isUser = turn.role === 'user'
   const images = turn.images
     ? (typeof turn.images === 'string' ? JSON.parse(turn.images) : turn.images) as string[]
@@ -17,11 +17,11 @@ export const MessageBubble = memo(function MessageBubble({ turn }: { turn: Turn 
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div className={`max-w-[95%] sm:max-w-[80%] px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg text-sm leading-relaxed ${
+      <div className={`group relative max-w-[95%] sm:max-w-[80%] px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg text-sm leading-relaxed ${
         isUser
           ? 'bg-user-bg border border-border text-text'
           : 'bg-surface border border-border text-text'
-      } ${turn.status === 'error' ? 'border-error/50' : ''} break-words overflow-hidden`}>
+      } ${turn.status === 'error' ? 'border-error/50' : ''} break-words`}>
         {images.length > 0 && (
           <div className="flex gap-2 flex-wrap mb-2">
             {images.map((img, i) => (
@@ -55,12 +55,27 @@ export const MessageBubble = memo(function MessageBubble({ turn }: { turn: Turn 
             ))}
           </div>
         )}
-        {turn.status === 'error' ? (
-          <div className="text-xs text-error">{turn.content || 'Error'}</div>
-        ) : isUser ? (
-          turn.content && <p className="whitespace-pre-wrap">{turn.content}</p>
-        ) : (
-          <MarkdownRenderer content={turn.content} />
+        <div className="overflow-hidden">
+          {turn.status === 'error' ? (
+            <div className="text-xs text-error">{turn.content || 'Error'}</div>
+          ) : isUser ? (
+            turn.content && <p className="whitespace-pre-wrap">{turn.content}</p>
+          ) : (
+            <MarkdownRenderer content={turn.content} />
+          )}
+        </div>
+        {onDelete && (
+          <button
+            onClick={() => onDelete(turn.id)}
+            className="absolute bottom-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-error/20 text-text-dim hover:text-error"
+            title="Delete message"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 6h18"/>
+              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+            </svg>
+          </button>
         )}
       </div>
     </div>

@@ -350,6 +350,7 @@ async fn send_to_llm(
                             if let Some(ref id) = resp.id {
                                 tracing::info!("Saving response ID for session {}: {}", session_id, id);
                                 let _ = db::set_config(pool, &format!("prev_response_id:{}", session_id), id).await;
+                                let _ = db::set_turn_response_id(pool, assistant_turn_id, id).await;
                             }
                             if let Some(ref u) = resp.usage {
                                 tracing::info!("Usage: input={}, output={}, total={}", u.input_tokens, u.output_tokens, u.total_tokens);

@@ -1,10 +1,11 @@
-import { useEffect, useRef } from 'react'
-import { useAppState } from '../lib/state'
+import { useCallback, useEffect, useRef } from 'react'
+import { useAppState, useWs } from '../lib/state'
 import { MessageBubble } from './MessageBubble'
 import { StreamingMessage } from './StreamingMessage'
 
 export function ChatView() {
   const { activeSessionId, turns, streamingTurnId, streamingContent, thinking } = useAppState()
+  const ws = useWs()
   const containerRef = useRef<HTMLDivElement>(null)
 
   const sessionTurns = turns.get(activeSessionId) || []
@@ -14,6 +15,10 @@ export function ChatView() {
     if (el) el.scrollTop = el.scrollHeight
   }, [sessionTurns.length, streamingContent, thinking])
 
+  const handleDelete = useCallback((turnId: number) => {
+    ws?.send({ type: 'delete_message', session_id: activeSessionId, turn_id: turnId })
+  }, [ws, activeSessionId])
+
   return (
     <div ref={containerRef} className="flex-1 overflow-y-auto px-2 sm:px-4 py-3 sm:py-4 space-y-2 sm:space-y-3">
       {sessionTurns.length === 0 && !thinking && !streamingTurnId && (
@@ -22,7 +27,7 @@ export function ChatView() {
         </div>
       )}
       {sessionTurns.map(turn => (
-        <MessageBubble key={turn.id} turn={turn} />
+        <MessageBubble key={turn.id} turn={turn} onDelete={handleDelete} />
       ))}
       {thinking && !streamingContent && (
         <div className="flex justify-start">
