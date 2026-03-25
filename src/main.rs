@@ -37,6 +37,15 @@ async fn main() {
         tracing::warn!("v1 migration error (non-fatal): {}", e);
     }
 
+    // Initialize active agent if not set
+    if db::get_active_agent_id(&pool).await.ok().flatten().is_none() {
+        let agents = config::discover_agents();
+        if let Some(first) = agents.first() {
+            db::set_active_agent_id(&pool, &first.id).await.ok();
+            tracing::info!("Set initial active agent: {} ({})", first.name, first.id);
+        }
+    }
+
     // Ensure at least one session exists
     let active_agent_id = db::get_active_agent_id(&pool).await
         .ok().flatten().unwrap_or_else(|| "main".to_string());
