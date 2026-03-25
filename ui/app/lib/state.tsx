@@ -1,5 +1,5 @@
 import { createContext, useContext, useReducer, useEffect, useRef, type ReactNode } from 'react'
-import type { Session, Turn, WsMessage } from './types'
+import type { Agent, Session, Turn, WsMessage } from './types'
 import { WebSocketManager } from './ws'
 
 interface AppState {
@@ -11,6 +11,8 @@ interface AppState {
   recording: boolean
   partialTranscript: string
   voiceEnabled: boolean
+  agents: Agent[]
+  activeAgentId: string
   connected: boolean
   thinking: boolean
   showHelp: boolean
@@ -36,6 +38,8 @@ const initialState: AppState = {
   recording: false,
   partialTranscript: '',
   voiceEnabled: true,
+  agents: [],
+  activeAgentId: '',
   connected: false,
   thinking: false,
   showHelp: false,
@@ -65,7 +69,7 @@ function reducer(state: AppState, action: Action): AppState {
       const msg = action.msg
       switch (msg.type) {
         case 'config':
-          return { ...state, voiceEnabled: msg.voice_enabled, activeSessionId: msg.active_session_id }
+          return { ...state, voiceEnabled: msg.voice_enabled, activeSessionId: msg.active_session_id, activeAgentId: msg.active_agent_id }
         case 'session_list':
           return { ...state, sessions: msg.sessions }
         case 'session_switched':
@@ -143,6 +147,10 @@ function reducer(state: AppState, action: Action): AppState {
           return { ...state, voiceEnabled: msg.enabled }
         case 'show_help':
           return { ...state, showHelp: true }
+        case 'agent_list':
+          return { ...state, agents: msg.agents }
+        case 'agent_switched':
+          return { ...state, activeAgentId: msg.agent_id }
         default:
           return state
       }

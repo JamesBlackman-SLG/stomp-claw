@@ -17,6 +17,11 @@ export interface Turn {
   documents: string | null
 }
 
+export interface Agent {
+  id: string
+  name: string
+}
+
 // Server -> Client messages
 export type WsMessage =
   | { type: 'session_list'; sessions: Session[] }
@@ -35,8 +40,10 @@ export type WsMessage =
   | { type: 'llm_error'; session_id: string; turn_id: number; error: string }
   | { type: 'voice_toggled'; enabled: boolean }
   | { type: 'show_help' }
-  | { type: 'config'; voice_enabled: boolean; active_session_id: string }
+  | { type: 'config'; voice_enabled: boolean; active_session_id: string; active_agent_id: string }
   | { type: 'context_usage'; total_tokens: number; context_window: number }
+  | { type: 'agent_list'; agents: Agent[] }
+  | { type: 'agent_switched'; agent_id: string }
 
 // Client -> Server messages
 export type WsCommand =
@@ -48,3 +55,4 @@ export type WsCommand =
   | { type: 'delete_message'; session_id: string; turn_id: number }
   | { type: 'cancel_recording' }
   | { type: 'toggle_voice' }
+  | { type: 'switch_agent'; agent_id: string }

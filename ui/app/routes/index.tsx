@@ -4,6 +4,7 @@ import { StatusBar } from '../components/StatusBar'
 import { TextInput } from '../components/TextInput'
 import { ContextBar } from '../components/ContextBar'
 import { ConnectionStatus } from '../components/ConnectionStatus'
+import { AgentSelector } from '../components/AgentSelector'
 import { HelpModal } from '../components/HelpModal'
 import { useAppState, useDispatch } from '../lib/state'
 
@@ -30,6 +31,7 @@ export function Home() {
           <h1 className="text-accent font-bold text-base sm:text-lg tracking-wider">STOMP CLAW</h1>
         </div>
         <div className="flex items-center gap-2 sm:gap-3">
+          <AgentSelector />
           <button
             onClick={() => dispatch({ type: 'set_show_help', show: true })}
             className="text-text-dim hover:text-accent text-xs border border-border rounded-full px-2 sm:px-2.5 py-0.5 hover:border-accent transition-colors"
