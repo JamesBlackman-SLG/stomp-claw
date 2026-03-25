@@ -15,6 +15,7 @@ pub enum Command {
     SwitchSession(String),
     ListSessions,
     RenameSession(String),
+    SwitchAgent(String),
     VoiceOn,
     VoiceOff,
     Help,
@@ -41,7 +42,7 @@ pub enum Event {
     // LLM
     LlmThinking { session_id: String, turn_id: i64 },
     LlmToken { session_id: String, turn_id: i64, token: String, accumulated: String },
-    LlmDone { session_id: String, turn_id: i64, full_response: String, input_tokens: Option<u32>, output_tokens: Option<u32>, total_tokens: Option<u32> },
+    LlmDone { session_id: String, turn_id: i64, full_response: String, input_tokens: Option<u32>, output_tokens: Option<u32>, total_tokens: Option<u32>, agent_id: String },
     LlmError { session_id: String, turn_id: i64, error: String },
 
     // Session

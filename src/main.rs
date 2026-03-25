@@ -46,6 +46,14 @@ async fn main() {
         }
     }
 
+    // Seed default voice IDs if not already set
+    if db::get_agent_voice_id(&pool, "main").await.ok().flatten().is_none() {
+        db::set_agent_voice_id(&pool, "main", "UaYTS0wayjmO9KD1LR4R").await.ok();
+    }
+    if db::get_agent_voice_id(&pool, "personal").await.ok().flatten().is_none() {
+        db::set_agent_voice_id(&pool, "personal", "v1IIiVAN4yJaGycxWmjU").await.ok();
+    }
+
     // Ensure at least one session exists
     let active_agent_id = db::get_active_agent_id(&pool).await
         .ok().flatten().unwrap_or_else(|| "main".to_string());
@@ -77,7 +85,8 @@ async fn main() {
         .map(|v| v == "true")
         .unwrap_or(false);
     let beep_rx = tx.subscribe();
-    tokio::spawn(beep::run(beep_rx, voice_enabled));
+    let beep_pool = pool.clone();
+    tokio::spawn(beep::run(beep_rx, voice_enabled, beep_pool));
 
     // Audio runs on a dedicated thread (cpal::Stream is not Send)
     let audio_tx = tx.clone();
@@ -193,6 +202,47 @@ async fn handle_voice_commands(
                         if let Some(id) = db::get_active_session_id(&pool).await.ok().flatten() {
                             let _ = db::rename_session(&pool, &id, &new_name).await;
                             let _ = tx.send(events::Event::SessionRenamed { session_id: id, name: new_name });
+                        }
+                    }
+                    events::Command::SwitchAgent(query) => {
+                        tracing::info!("Processing SwitchAgent command: '{}'", query);
+                        let agents = config::discover_agents();
+                        let agent_names: Vec<String> = agents.iter().map(|a| a.name.clone()).collect();
+                        if let Some(matched_name) = commands::fuzzy_match_session(&query, &agent_names) {
+                            if let Some(agent) = agents.iter().find(|a| a.name == matched_name) {
+                                tracing::info!("Switching to agent: '{}' ({})", matched_name, agent.id);
+                                let _ = db::set_active_agent_id(&pool, &agent.id).await;
+                                let _ = tx.send(events::Event::AgentSwitched { agent_id: agent.id.clone() });
+                                // Switch to first session for this agent (or create one)
+                                let sessions = db::get_sessions(&pool, &agent.id).await.unwrap_or_default();
+                                if let Some(session) = sessions.first() {
+                                    let _ = db::set_active_session_id(&pool, &session.id).await;
+                                    let _ = tx.send(events::Event::SessionSwitched { session_id: session.id.clone() });
+                                } else {
+                                    let names: Vec<String> = vec![];
+                                    let name = commands::generate_session_name(&names);
+                                    let now = chrono::Utc::now().to_rfc3339();
+                                    let session = db::Session {
+                                        id: format!("stomp-{}", uuid::Uuid::new_v4()),
+                                        name: name.clone(),
+                                        created_at: now.clone(),
+                                        last_used: now,
+                                        agent_id: agent.id.clone(),
+                                    };
+                                    let _ = db::create_session(&pool, &session).await;
+                                    let _ = db::set_active_session_id(&pool, &session.id).await;
+                                    let _ = tx.send(events::Event::SessionCreated {
+                                        session: events::SessionInfo {
+                                            id: session.id.clone(), name: session.name,
+                                            created_at: session.created_at, last_used: session.last_used,
+                                        },
+                                    });
+                                    let _ = tx.send(events::Event::SessionSwitched { session_id: session.id });
+                                }
+                                beep::beep_up();
+                            }
+                        } else {
+                            tracing::warn!("No agent matched for query: '{}' (available: {:?})", query, agent_names);
                         }
                     }
                     events::Command::VoiceOn => {

@@ -130,6 +130,16 @@ pub fn parse_command(transcript: &str) -> Option<Command> {
         }
     }
 
+    // Switch agent
+    for prefix in &["talk to", "switch to agent", "switch agent"] {
+        if let Some(rest) = text.strip_prefix(prefix) {
+            let name = rest.trim().to_string();
+            if !name.is_empty() {
+                return Some(Command::SwitchAgent(name));
+            }
+        }
+    }
+
     // Rename session
     for prefix in &["rename session", "name session"] {
         if let Some(rest) = text.strip_prefix(prefix) {
