@@ -46,8 +46,10 @@ enum WsOutgoing {
     LlmError { session_id: String, turn_id: i64, error: String },
     VoiceToggled { enabled: bool },
     ShowHelp,
-    Config { voice_enabled: bool, active_session_id: String },
+    Config { voice_enabled: bool, active_session_id: String, active_agent_id: String },
     ContextUsage { total_tokens: u32, context_window: u32 },
+    AgentList { agents: Vec<crate::config::Agent> },
+    AgentSwitched { agent_id: String },
 }
 
 #[derive(Deserialize)]
@@ -68,6 +70,7 @@ enum WsIncoming {
     DeleteMessage { session_id: String, turn_id: i64 },
     CancelRecording,
     ToggleVoice,
+    SwitchAgent { agent_id: String },
 }
 
 // --- Embedded frontend assets ---
@@ -166,6 +169,7 @@ pub async fn run(tx: EventSender, _rx: EventReceiver, pool: SqlitePool) {
         .route("/api/sessions", get(get_sessions))
         .route("/api/sessions/{id}/turns", get(get_turns))
         .route("/api/config", get(get_config))
+        .route("/api/agents", get(get_agents))
         .route("/local-file", get(local_file_handler))
         .fallback(static_handler)
         .with_state(state);
@@ -293,10 +297,18 @@ async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
     let session_id = db::get_active_session_id(&state.pool).await
         .ok().flatten()
         .unwrap_or_default();
+    let agent_id = db::get_active_agent_id(&state.pool).await
+        .ok().flatten()
+        .unwrap_or_else(|| "main".to_string());
     Json(serde_json::json!({
         "voice_enabled": voice,
         "active_session_id": session_id,
+        "active_agent_id": agent_id,
     }))
+}
+
+async fn get_agents() -> Json<Vec<crate::config::Agent>> {
+    Json(crate::config::discover_agents())
 }
 
 // --- WebSocket handler ---
@@ -341,14 +353,23 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
     let active_session_id = db::get_active_session_id(&state.pool).await
         .ok().flatten()
         .unwrap_or_default();
+    let active_agent_id = db::get_active_agent_id(&state.pool).await
+        .ok().flatten()
+        .unwrap_or_else(|| "main".to_string());
 
     let _ = send_ws(&mut ws_tx, &WsOutgoing::Config {
         voice_enabled,
         active_session_id: active_session_id.clone(),
+        active_agent_id: active_agent_id.clone(),
+    }).await;
+
+    // Send agent list
+    let _ = send_ws(&mut ws_tx, &WsOutgoing::AgentList {
+        agents: crate::config::discover_agents(),
     }).await;
 
     // Send session list
-    if let Ok(sessions) = db::get_sessions(&state.pool, "main").await {
+    if let Ok(sessions) = db::get_sessions(&state.pool, &active_agent_id).await {
         let _ = send_ws(&mut ws_tx, &WsOutgoing::SessionList { sessions }).await;
     }
 
@@ -458,6 +479,15 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             Some(WsOutgoing::VoiceToggled { enabled }),
                         Event::ShowHelp => Some(WsOutgoing::ShowHelp),
                         Event::FinalTranscript { .. } => None,
+                        Event::AgentSwitched { agent_id } => {
+                            let _ = send_ws(&mut forward_tx, &WsOutgoing::AgentSwitched {
+                                agent_id: agent_id.clone(),
+                            }).await;
+                            if let Ok(sessions) = db::get_sessions(&pool, &agent_id).await {
+                                let _ = send_ws(&mut forward_tx, &WsOutgoing::SessionList { sessions }).await;
+                            }
+                            None
+                        }
                         _ => None,
                     };
                     if let Some(msg) = msg
@@ -685,6 +715,37 @@ async fn handle_ws_message(msg: WsIncoming, tx: &EventSender, pool: &SqlitePool)
             let new_val = !current;
             let _ = db::set_config(pool, "voice_enabled", if new_val { "true" } else { "false" }).await;
             let _ = tx.send(Event::VoiceToggled { enabled: new_val });
+        }
+        WsIncoming::SwitchAgent { agent_id } => {
+            let _ = db::set_active_agent_id(pool, &agent_id).await;
+            let sessions = db::get_sessions(pool, &agent_id).await.unwrap_or_default();
+            if let Some(session) = sessions.first() {
+                let _ = db::set_active_session_id(pool, &session.id).await;
+                let _ = tx.send(Event::AgentSwitched { agent_id });
+                let _ = tx.send(Event::SessionSwitched { session_id: session.id.clone() });
+            } else {
+                let name = crate::commands::generate_session_name(&[]);
+                let now = chrono::Utc::now().to_rfc3339();
+                let session = db::Session {
+                    id: format!("stomp-{}", uuid::Uuid::new_v4()),
+                    name: name.clone(),
+                    created_at: now.clone(),
+                    last_used: now,
+                    agent_id: agent_id.clone(),
+                };
+                let _ = db::create_session(pool, &session).await;
+                let _ = db::set_active_session_id(pool, &session.id).await;
+                let _ = tx.send(Event::AgentSwitched { agent_id });
+                let _ = tx.send(Event::SessionCreated {
+                    session: crate::events::SessionInfo {
+                        id: session.id.clone(),
+                        name: session.name,
+                        created_at: session.created_at,
+                        last_used: session.last_used,
+                    },
+                });
+                let _ = tx.send(Event::SessionSwitched { session_id: session.id });
+            }
         }
     }
 }
