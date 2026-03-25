@@ -85,6 +85,7 @@ async fn send_to_llm(
     voice_enabled: bool,
     images: &[String],
     documents: &[(String, String)],
+    agent_id: &str,
 ) {
     // Create user turn in DB
     let images_json = if images.is_empty() { None } else {
@@ -236,7 +237,7 @@ async fn send_to_llm(
     let resp = match client.post(config::OPENCLAW_URL)
         .header("Authorization", format!("Bearer {}", config::openclaw_token()))
         .header("Content-Type", "application/json")
-        .header("x-openclaw-session-key", format!("agent:main:{}", session_id))
+        .header("x-openclaw-session-key", format!("agent:{}:{}", agent_id, session_id))
         .json(&payload)
         .send().await
     {
@@ -416,7 +417,10 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver, pool: SqlitePool) {
                 let client = client.clone();
                 tokio::spawn(async move {
                     let _ = db::touch_session(&pool, &session_id).await;
-                    send_to_llm(&tx, &pool, &client, &session_id, &text, voice_enabled, &[], &[]).await;
+                    let agent_id = db::get_active_agent_id(&pool).await
+                        .ok().flatten()
+                        .unwrap_or_else(|| "main".to_string());
+                    send_to_llm(&tx, &pool, &client, &session_id, &text, voice_enabled, &[], &[], &agent_id).await;
                 });
             }
             Ok(Event::UserTextMessage { session_id, text, images, documents }) => {
@@ -425,7 +429,10 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver, pool: SqlitePool) {
                 let client = client.clone();
                 tokio::spawn(async move {
                     let _ = db::touch_session(&pool, &session_id).await;
-                    send_to_llm(&tx, &pool, &client, &session_id, &text, voice_enabled, &images, &documents).await;
+                    let agent_id = db::get_active_agent_id(&pool).await
+                        .ok().flatten()
+                        .unwrap_or_else(|| "main".to_string());
+                    send_to_llm(&tx, &pool, &client, &session_id, &text, voice_enabled, &images, &documents, &agent_id).await;
                 });
             }
             Ok(Event::VoiceToggled { enabled }) => {
