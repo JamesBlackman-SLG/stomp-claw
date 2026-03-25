@@ -38,7 +38,9 @@ async fn main() {
     }
 
     // Ensure at least one session exists
-    let sessions = db::get_sessions(&pool).await.unwrap_or_default();
+    let active_agent_id = db::get_active_agent_id(&pool).await
+        .ok().flatten().unwrap_or_else(|| "main".to_string());
+    let sessions = db::get_sessions(&pool, &active_agent_id).await.unwrap_or_default();
     if sessions.is_empty() {
         let now = chrono::Utc::now().to_rfc3339();
         let name = commands::generate_session_name(&[]);
@@ -47,6 +49,7 @@ async fn main() {
             name,
             created_at: now.clone(),
             last_used: now,
+            agent_id: active_agent_id.clone(),
         };
         db::create_session(&pool, &session).await.expect("Failed to create initial session");
         db::set_active_session_id(&pool, &session.id).await.expect("Failed to set active session");
@@ -124,7 +127,9 @@ async fn handle_voice_commands(
             Ok(events::Event::VoiceCommand { command }) => {
                 match command {
                     events::Command::NewSession => {
-                        let sessions = db::get_sessions(&pool).await.unwrap_or_default();
+                        let agent_id = db::get_active_agent_id(&pool).await
+                            .ok().flatten().unwrap_or_else(|| "main".to_string());
+                        let sessions = db::get_sessions(&pool, &agent_id).await.unwrap_or_default();
                         let names: Vec<String> = sessions.iter().map(|s| s.name.clone()).collect();
                         let name = commands::generate_session_name(&names);
                         let now = chrono::Utc::now().to_rfc3339();
@@ -133,6 +138,7 @@ async fn handle_voice_commands(
                             name: name.clone(),
                             created_at: now.clone(),
                             last_used: now,
+                            agent_id: agent_id.clone(),
                         };
                         let _ = db::create_session(&pool, &session).await;
                         let _ = db::set_active_session_id(&pool, &session.id).await;
@@ -147,7 +153,9 @@ async fn handle_voice_commands(
                     }
                     events::Command::SwitchSession(query) => {
                         tracing::info!("Processing SwitchSession command: '{}'", query);
-                        let sessions = db::get_sessions(&pool).await.unwrap_or_default();
+                        let agent_id = db::get_active_agent_id(&pool).await
+                            .ok().flatten().unwrap_or_else(|| "main".to_string());
+                        let sessions = db::get_sessions(&pool, &agent_id).await.unwrap_or_default();
                         let names: Vec<String> = sessions.iter().map(|s| s.name.clone()).collect();
 
                         // Try number first

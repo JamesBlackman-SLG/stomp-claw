@@ -9,7 +9,11 @@ pub struct Session {
     pub name: String,
     pub created_at: String,
     pub last_used: String,
+    #[serde(default = "default_agent_id")]
+    pub agent_id: String,
 }
+
+fn default_agent_id() -> String { "main".to_string() }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Turn {
@@ -82,6 +86,9 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let _ = sqlx::query("ALTER TABLE turns ADD COLUMN response_id TEXT")
         .execute(pool).await;
 
+    let _ = sqlx::query("ALTER TABLE sessions ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main'")
+        .execute(pool).await;
+
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS config (
             key TEXT PRIMARY KEY,
@@ -99,23 +106,26 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
 // --- Session CRUD ---
 
-pub async fn get_sessions(pool: &SqlitePool) -> Result<Vec<Session>, sqlx::Error> {
-    let rows = sqlx::query("SELECT id, name, created_at, last_used FROM sessions WHERE deleted_at IS NULL ORDER BY last_used DESC")
+pub async fn get_sessions(pool: &SqlitePool, agent_id: &str) -> Result<Vec<Session>, sqlx::Error> {
+    let rows = sqlx::query("SELECT id, name, created_at, last_used, agent_id FROM sessions WHERE deleted_at IS NULL AND agent_id = ? ORDER BY last_used DESC")
+        .bind(agent_id)
         .fetch_all(pool).await?;
     Ok(rows.iter().map(|r| Session {
         id: r.get("id"),
         name: r.get("name"),
         created_at: r.get("created_at"),
         last_used: r.get("last_used"),
+        agent_id: r.get("agent_id"),
     }).collect())
 }
 
 pub async fn create_session(pool: &SqlitePool, session: &Session) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO sessions (id, name, created_at, last_used) VALUES (?, ?, ?, ?)")
+    sqlx::query("INSERT INTO sessions (id, name, created_at, last_used, agent_id) VALUES (?, ?, ?, ?, ?)")
         .bind(&session.id)
         .bind(&session.name)
         .bind(&session.created_at)
         .bind(&session.last_used)
+        .bind(&session.agent_id)
         .execute(pool).await?;
     Ok(())
 }
@@ -288,6 +298,14 @@ pub async fn get_active_session_id(pool: &SqlitePool) -> Result<Option<String>, 
 
 pub async fn set_active_session_id(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
     set_config(pool, "active_session_id", id).await
+}
+
+pub async fn get_active_agent_id(pool: &SqlitePool) -> Result<Option<String>, sqlx::Error> {
+    get_config(pool, "active_agent_id").await
+}
+
+pub async fn set_active_agent_id(pool: &SqlitePool, id: &str) -> Result<(), sqlx::Error> {
+    set_config(pool, "active_agent_id", id).await
 }
 
 pub async fn get_session_tokens(pool: &SqlitePool, session_id: &str) -> Result<Option<u32>, sqlx::Error> {

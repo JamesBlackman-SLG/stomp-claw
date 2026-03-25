@@ -130,7 +130,9 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver, pool: SqlitePool) {
 
                                 // During the first 2 seconds, check for commands/session switches
                                 if start.elapsed().as_millis() <= 2000 {
-                                    let session_names: Vec<String> = db::get_sessions(&pool2).await
+                                    let agent_id = db::get_active_agent_id(&pool2).await
+                                        .ok().flatten().unwrap_or_else(|| "main".to_string());
+                                let session_names: Vec<String> = db::get_sessions(&pool2, &agent_id).await
                                         .unwrap_or_default()
                                         .iter()
                                         .map(|s| s.name.clone())

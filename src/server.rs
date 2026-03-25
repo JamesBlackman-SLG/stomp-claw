@@ -271,7 +271,9 @@ pub async fn run(tx: EventSender, _rx: EventReceiver, pool: SqlitePool) {
 }
 
 async fn get_sessions(State(state): State<AppState>) -> Json<Vec<db::Session>> {
-    let sessions = db::get_sessions(&state.pool).await.unwrap_or_default();
+    let agent_id = db::get_active_agent_id(&state.pool).await
+        .ok().flatten().unwrap_or_else(|| "main".to_string());
+    let sessions = db::get_sessions(&state.pool, &agent_id).await.unwrap_or_default();
     Json(sessions)
 }
 
@@ -346,7 +348,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
     }).await;
 
     // Send session list
-    if let Ok(sessions) = db::get_sessions(&state.pool).await {
+    if let Ok(sessions) = db::get_sessions(&state.pool, "main").await {
         let _ = send_ws(&mut ws_tx, &WsOutgoing::SessionList { sessions }).await;
     }
 
@@ -435,6 +437,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             let s = db::Session {
                                 id: session.id, name: session.name,
                                 created_at: session.created_at, last_used: session.last_used,
+                                agent_id: "main".to_string(),
                             };
                             Some(WsOutgoing::SessionCreated { session: s })
                         }
@@ -579,7 +582,9 @@ async fn handle_ws_message(msg: WsIncoming, tx: &EventSender, pool: &SqlitePool)
             let _ = tx.send(Event::SessionSwitched { session_id });
         }
         WsIncoming::CreateSession => {
-            let sessions = db::get_sessions(pool).await.unwrap_or_default();
+            let agent_id = db::get_active_agent_id(pool).await
+                .ok().flatten().unwrap_or_else(|| "main".to_string());
+            let sessions = db::get_sessions(pool, &agent_id).await.unwrap_or_default();
             let existing_names: Vec<String> = sessions.iter().map(|s| s.name.clone()).collect();
             let name = crate::commands::generate_session_name(&existing_names);
             let now = chrono::Utc::now().to_rfc3339();
@@ -588,6 +593,7 @@ async fn handle_ws_message(msg: WsIncoming, tx: &EventSender, pool: &SqlitePool)
                 name: name.clone(),
                 created_at: now.clone(),
                 last_used: now,
+                agent_id: agent_id.clone(),
             };
             let _ = db::create_session(pool, &session).await;
             let _ = db::set_active_session_id(pool, &session.id).await;
@@ -609,7 +615,9 @@ async fn handle_ws_message(msg: WsIncoming, tx: &EventSender, pool: &SqlitePool)
             let _ = db::delete_session(pool, &session_id).await;
             let _ = tx.send(Event::SessionDeleted { session_id });
             // Switch to next available session or create one
-            let remaining = db::get_sessions(pool).await.unwrap_or_default();
+            let agent_id = db::get_active_agent_id(pool).await
+                .ok().flatten().unwrap_or_else(|| "main".to_string());
+            let remaining = db::get_sessions(pool, &agent_id).await.unwrap_or_default();
             if let Some(next) = remaining.first() {
                 let _ = db::set_active_session_id(pool, &next.id).await;
                 let _ = tx.send(Event::SessionSwitched { session_id: next.id.clone() });
@@ -622,6 +630,7 @@ async fn handle_ws_message(msg: WsIncoming, tx: &EventSender, pool: &SqlitePool)
                     name,
                     created_at: now.clone(),
                     last_used: now,
+                    agent_id: agent_id.clone(),
                 };
                 let _ = db::create_session(pool, &session).await;
                 let _ = db::set_active_session_id(pool, &session.id).await;

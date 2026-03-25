@@ -61,7 +61,9 @@ pub async fn run(tx: EventSender, mut rx: EventReceiver, pool: SqlitePool) {
 
                         if is_command_window {
                             // Get session names for fuzzy matching
-                            let session_names: Vec<String> = db::get_sessions(&pool).await
+                            let agent_id = db::get_active_agent_id(&pool).await
+                                .ok().flatten().unwrap_or_else(|| "main".to_string());
+                            let session_names: Vec<String> = db::get_sessions(&pool, &agent_id).await
                                 .unwrap_or_default()
                                 .iter()
                                 .map(|s| s.name.clone())
