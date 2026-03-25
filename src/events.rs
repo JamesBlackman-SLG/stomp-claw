@@ -53,6 +53,9 @@ pub enum Event {
     // Turn
     TurnDeleted { session_id: String, turn_id: i64 },
 
+    // Agent
+    AgentSwitched { agent_id: String },
+
     // Config
     VoiceToggled { enabled: bool },
 
